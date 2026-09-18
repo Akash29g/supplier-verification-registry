@@ -82,10 +82,18 @@ class VerificationResult:
 
 
 def _call_gstincheck(gstin, api_key):
-    """Primary GSTIN lookup. Returns dict or raises on hard failure."""
+    """
+    Primary GSTIN lookup. Returns dict or raises on hard failure.
+
+    bug: original implementation called this as
+    /check?gstin_no=...&api_key=... which returned HTTP 404 against the real
+    service - confirmed via gstincheck.co.in's own docs that the endpoint is
+    path-based, not query-param based:
+        https://sheet.gstincheck.co.in/check/API_KEY/GSTIN_NUMBER
+    """
     try:
         response = requests.get(
-            f"{GSTINCHECK_BASE_URL}?gstin_no={gstin}&api_key={api_key}",
+            f"{GSTINCHECK_BASE_URL}/{api_key}/{gstin}",
             timeout=REQUEST_TIMEOUT_SECONDS,
         )
     except requests.exceptions.Timeout:
@@ -100,21 +108,28 @@ def _call_gstincheck(gstin, api_key):
 
     payload = response.json()
 
-    # bug: fix crash when gstincheck.co.in returns empty legal_name on some
-    # inactive/cancelled GSTINs - don't assume the field is always populated,
-    # fall back to whatever name field is present or mark it unknown.
+    # bug: original field guesses (legal_name, gstin_status) were wrong -
+    # gstincheck.co.in is a GSP-network reseller and mirrors the actual
+    # government GST schema field names (lgnm, tradeNam, sts, dty, pradr),
+    # not friendlier renamed fields. Falling back through several possible
+    # key names since real-world responses vary slightly by GSP provider.
     legal_name = (
-        payload.get("legal_name")
+        payload.get("lgnm")
+        or payload.get("legal_name")
+        or payload.get("tradeNam")
         or payload.get("trade_name")
-        or payload.get("name")
         or "UNKNOWN"
     )
+    address = None
+    pradr = payload.get("pradr")
+    if isinstance(pradr, dict):
+        address = pradr.get("addr")
 
     return {
         "legal_name": legal_name,
-        "registration_status": payload.get("gstin_status", "UNKNOWN"),
+        "registration_status": payload.get("sts", payload.get("gstin_status", "UNKNOWN")),
         "taxpayer_type": payload.get("dty", "UNKNOWN"),
-        "address": payload.get("pradr", {}).get("addr") if payload.get("pradr") else None,
+        "address": address,
         "raw": payload,
     }
 
