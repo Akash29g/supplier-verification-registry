@@ -26,13 +26,41 @@ from agents.gstin_utils import validate_gstin
 
 GSTINCHECK_BASE_URL = "https://sheet.gstincheck.co.in/check"
 DATA_GOV_IN_BASE_URL = "https://api.data.gov.in/resource"
-# Company Master Data resource ID - confirm this against your actual
-# data.gov.in dataset page, resource IDs are dataset-specific.
+# Company Master Data resource ID - confirmed against the live dataset page
+# for "Registrars of Companies (RoC)-wise Company Master Data".
 DATA_GOV_IN_MCA_RESOURCE_ID = os.environ.get(
-    "DATA_GOV_IN_MCA_RESOURCE_ID", "REPLACE_WITH_REAL_RESOURCE_ID"
+    "DATA_GOV_IN_MCA_RESOURCE_ID", "4dbe5667-7b6b-41d7-82af-211562424d9a"
 )
 
 REQUEST_TIMEOUT_SECONDS = 6
+
+# bug: original assumption was that this API supported filters[pan] for a
+# direct single-company lookup. Confirmed against the live API's parameter
+# list and a real sample response that it does NOT - the only supported
+# filter is CompanyStateCode, and it returns lowercase state names
+# (e.g. "haryana"), not codes. Real field names confirmed from a live
+# response: CIN, CompanyName, CompanyStatus, CompanyStateCode,
+# PaidupCapital, CompanyRegistrationdate_date, Registered_Office_Address.
+#
+# Fix: pull that state's company list (best-effort, capped) and do a local
+# fuzzy match on CompanyName against the legal_name gstincheck.co.in
+# returned, instead of querying by PAN/CIN directly. This is enrichment
+# only - if no match is found, the pipeline still returns a result driven
+# by gstincheck.co.in alone (see verify_gstin below).
+GST_STATE_CODE_TO_DATA_GOV_IN_NAME = {
+    "01": "jammu and kashmir", "02": "himachal pradesh", "03": "punjab",
+    "04": "chandigarh", "05": "uttarakhand", "06": "haryana", "07": "delhi",
+    "08": "rajasthan", "09": "uttar pradesh", "10": "bihar", "11": "sikkim",
+    "12": "arunachal pradesh", "13": "nagaland", "14": "manipur",
+    "15": "mizoram", "16": "tripura", "17": "meghalaya", "18": "assam",
+    "19": "west bengal", "20": "jharkhand", "21": "odisha",
+    "22": "chhattisgarh", "23": "madhya pradesh", "24": "gujarat",
+    "25": "daman and diu", "26": "dadra and nagar haveli",
+    "27": "maharashtra", "28": "andhra pradesh", "29": "karnataka",
+    "30": "goa", "31": "lakshadweep", "32": "kerala", "33": "tamil nadu",
+    "34": "puducherry", "35": "andaman and nicobar islands",
+    "36": "telangana", "37": "andhra pradesh", "38": "ladakh",
+}
 
 
 class VerificationResult:
@@ -118,29 +146,54 @@ def _call_gstinapi_fallback(gstin, api_key):
     return None
 
 
-def _call_data_gov_in(pan_fragment, api_key):
+def _normalize_company_name(name):
+    if not name:
+        return ""
+    return "".join(ch for ch in name.lower() if ch.isalnum() or ch.isspace()).strip()
+
+
+def _call_data_gov_in(state_code, legal_name_hint, api_key):
     """
     Cross-reference data.gov.in's Company Master Data. This is a best-effort
-    enrichment step, not required for a verdict - if it fails, the pipeline
-    still returns a result from the GSTIN lookup alone.
+    enrichment step, not required for a verdict - if it fails or finds no
+    match, the pipeline still returns a result from gstincheck.co.in alone.
+
+    Real constraint (confirmed against the live API): the only supported
+    filter is CompanyStateCode (a lowercase state name string). There is no
+    way to query by PAN, CIN, or company name directly, so this pulls a
+    capped batch of that state's companies and matches locally by name.
     """
+    state_name = GST_STATE_CODE_TO_DATA_GOV_IN_NAME.get(state_code)
+    if not state_name or not legal_name_hint:
+        return None
+
     try:
         response = requests.get(
             f"{DATA_GOV_IN_BASE_URL}/{DATA_GOV_IN_MCA_RESOURCE_ID}",
             params={
                 "api-key": api_key,
                 "format": "json",
-                "filters[pan]": pan_fragment,
-                "limit": 1,
+                "filters[CompanyStateCode]": state_name,
+                "limit": 200,  # capped batch, not exhaustive - enrichment only
             },
             timeout=REQUEST_TIMEOUT_SECONDS,
         )
         if response.status_code != 200:
             return None
         records = response.json().get("records", [])
-        return records[0] if records else None
     except requests.exceptions.RequestException:
         return None
+    except ValueError:
+        # malformed/non-JSON body - treat as a soft failure, not a crash
+        return None
+
+    target = _normalize_company_name(legal_name_hint)
+    for record in records:
+        candidate = _normalize_company_name(record.get("CompanyName", ""))
+        if candidate and (target in candidate or candidate in target):
+            return record
+
+    return None
 
 
 def verify_gstin(raw_gstin):
@@ -186,8 +239,11 @@ def verify_gstin(raw_gstin):
         )
 
     company_record = None
-    if data_gov_key and format_check.pan:
-        company_record = _call_data_gov_in(format_check.pan, data_gov_key)
+    if data_gov_key and format_check.state_code:
+        legal_name_hint = gstin_lookup.get("legal_name") if gstin_lookup else None
+        company_record = _call_data_gov_in(
+            format_check.state_code, legal_name_hint, data_gov_key
+        )
 
     status = "ok" if (gstin_lookup and company_record) else "degraded"
 
