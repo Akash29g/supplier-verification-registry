@@ -21,6 +21,9 @@ graceful degraded result, not a stack trace.
 import os
 import time
 import requests
+from dotenv import load_dotenv
+
+load_dotenv()
 
 from agents.gstin_utils import validate_gstin
 
