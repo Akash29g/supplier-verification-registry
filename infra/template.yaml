@@ -1,0 +1,67 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Supplier Verification Registry — DynamoDB + Cognito
+
+Globals:
+  Function:
+    Runtime: python3.12
+    Timeout: 10
+    MemorySize: 256
+    Environment:
+      Variables:
+        SUPPLIERS_TABLE: !Ref SuppliersTable
+        VERIFICATION_LOG_TABLE: !Ref VerificationLogTable
+        USERS_TABLE: !Ref UsersTable
+
+Resources:
+  SuppliersTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "${AWS::StackName}-Suppliers"
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: owner_user_id
+          AttributeType: S
+        - AttributeName: gstin
+          AttributeType: S
+      KeySchema:
+        - AttributeName: owner_user_id
+          KeyType: HASH
+        - AttributeName: gstin
+          KeyType: RANGE
+
+  VerificationLogTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "${AWS::StackName}-VerificationLog"
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: owner_user_id
+          AttributeType: S
+        - AttributeName: log_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: owner_user_id
+          KeyType: HASH
+        - AttributeName: log_id
+          KeyType: RANGE
+
+  UsersTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "${AWS::StackName}-Users"
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: user_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: user_id
+          KeyType: HASH
+
+Outputs:
+  SuppliersTableName:
+    Value: !Ref SuppliersTable
+  VerificationLogTableName:
+    Value: !Ref VerificationLogTable
+  UsersTableName:
+    Value: !Ref UsersTable
