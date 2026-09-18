@@ -108,6 +108,16 @@ def _call_gstincheck(gstin, api_key):
 
     payload = response.json()
 
+    # bug: a 200 response can still carry an application-level error
+    # (flag: false + errorCode) - e.g. "API_KEY_INVALID" - which the
+    # original code silently swallowed into a fake "successful" result full
+    # of UNKNOWN fields. That masked real failures as degraded-but-ok.
+    if payload.get("flag") is False:
+        error_code = payload.get("errorCode", "UNKNOWN_ERROR")
+        raise RuntimeError(f"gstincheck.co.in rejected request: {error_code}")
+
+    payload = payload.get("data", payload)
+
     # bug: original field guesses (legal_name, gstin_status) were wrong -
     # gstincheck.co.in is a GSP-network reseller and mirrors the actual
     # government GST schema field names (lgnm, tradeNam, sts, dty, pradr),
