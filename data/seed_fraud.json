@@ -1,0 +1,57 @@
+{
+  "_note": "These are deliberately hand-crafted, not scraped/real. Each case exercises one specific risk-agent branch. This is a standard, expected hackathon technique for proving a detection system actually detects something - documented plainly here rather than hidden, per the master plan's honesty framing.",
+  "cases": [
+    {
+      "case_id": "fraud_001_malformed_gstin",
+      "source": "crafted_test_case",
+      "gstin": "27AAPFU0939F1ZX",
+      "expected_verdict": "REJECT",
+      "reason": "Checksum digit deliberately tampered (last char changed from V to X) - should fail offline Luhn mod-36 validation before any API call is even made."
+    },
+    {
+      "case_id": "fraud_002_shell_company",
+      "source": "crafted_test_case",
+      "gstin": "07AAACT2727Q1ZY",
+      "supplier_id": "SUP-FRAUD-002",
+      "name": "Bright Future Trading Co",
+      "registered_date": "2026-08-15",
+      "paid_up_capital_inr": 10000,
+      "claimed_business": "Bulk industrial steel supply, claims 50Cr annual turnover",
+      "expected_verdict": "REVIEW",
+      "reason": "Real-looking GSTIN structure, but registered under 60 days ago with minimal paid-up capital and a claimed business scale wildly inconsistent with company age/capital - classic shell-company pattern."
+    },
+    {
+      "case_id": "fraud_003_ring_node_a",
+      "source": "crafted_test_case",
+      "gstin": "29AAAPL1234C1ZA",
+      "supplier_id": "SUP-FRAUD-003A",
+      "name": "Sunrise Enterprises",
+      "bank_account": "000111222333",
+      "address": "Plot 14, Industrial Area Phase 2, Bengaluru",
+      "expected_verdict": "RISK",
+      "reason": "Node 1 of 3 in the fraud-ring case. Feeds the fraud-network graph (Round 6) - flagged because it shares bank_account with fraud_004 and fraud_005 below despite three different registered names/addresses."
+    },
+    {
+      "case_id": "fraud_004_ring_node_b",
+      "source": "crafted_test_case",
+      "gstin": "33AABCT3518Q1Z3",
+      "supplier_id": "SUP-FRAUD-003B",
+      "name": "Sunrise Traders",
+      "bank_account": "000111222333",
+      "address": "Unit 7, MG Road Business Park, Chennai",
+      "expected_verdict": "RISK",
+      "reason": "Node 2 of 3, same bank_account as fraud_003. Similar name pattern ('Sunrise') and identical bank account across a different declared address/city is the exact cross-reference signal /fraud-network is built to surface."
+    },
+    {
+      "case_id": "fraud_005_ring_node_c",
+      "source": "crafted_test_case",
+      "gstin": "06AAFCS1234D1ZV",
+      "supplier_id": "SUP-FRAUD-003C",
+      "name": "New Sunrise Impex",
+      "bank_account": "000111222333",
+      "address": "Sector 21, Industrial Estate, Gurugram",
+      "expected_verdict": "RISK",
+      "reason": "Node 3 of 3, completing the 3-node ring sharing one bank_account across three 'different' suppliers in three different cities."
+    }
+  ]
+}

@@ -1,0 +1,314 @@
+{
+  "_note": "Real, live-fetched results tagged source: live_api. See fetch_seed_legit.py.",
+  "companies": [
+    {
+      "gstin": "29AAACI4798L1ZU",
+      "status": "degraded",
+      "source": "live_api",
+      "data": {
+        "gstin_lookup": {
+          "legal_name": "INFOSYS LIMITED",
+          "registration_status": "Active",
+          "taxpayer_type": "Regular",
+          "address": {
+            "flno": "",
+            "lg": "",
+            "loc": "BANGALORE",
+            "pncd": "560100",
+            "bnm": "44 AND 97A",
+            "city": "",
+            "lt": "",
+            "stcd": "Karnataka",
+            "bno": "0",
+            "dst": "Bengaluru Urban",
+            "st": "ELECTRONIC CITY"
+          },
+          "raw": {
+            "ntcrbs": "SPO",
+            "adhrVFlag": "Yes",
+            "lgnm": "INFOSYS LIMITED",
+            "stj": "State - Karnataka,Division - Large Taxpayers Unit -LTU, Bengaluru, LOCAL GST Office - LGSTO LTU, Bengaluru (Jurisdictional Office)",
+            "dty": "Regular",
+            "cxdt": "",
+            "gstin": "29AAACI4798L1ZU",
+            "nba": [
+              "Bonded Warehouse",
+              "Works Contract",
+              "Service Provision",
+              "Recipient of Goods or Services",
+              "EOU / STP / EHTP",
+              "Export",
+              "Supplier of Services",
+              "Import",
+              "Warehouse / Depot",
+              "Leasing Business",
+              "Factory / Manufacturing"
+            ],
+            "ekycVFlag": "Not Applicable",
+            "cmpRt": "NA",
+            "rgdt": "01/07/2017",
+            "ctb": "Public Limited Company",
+            "pradr": {
+              "adr": "3RD CROSS, INFOSYS LIMITED, 44 AND 97A, ELECTRONIC CITY, BANGALORE, Bengaluru Urban, Karnataka, 560100",
+              "addr": {
+                "flno": "",
+                "lg": "",
+                "loc": "BANGALORE",
+                "pncd": "560100",
+                "bnm": "44 AND 97A",
+                "city": "",
+                "lt": "",
+                "stcd": "Karnataka",
+                "bno": "0",
+                "dst": "Bengaluru Urban",
+                "st": "ELECTRONIC CITY"
+              }
+            },
+            "sts": "Active",
+            "tradeNam": "INFOSYS LIMITED",
+            "isFieldVisitConducted": "No",
+            "adhrVdt": "08/09/2026",
+            "ctj": "State - CBIC,Zone - BENGALURU,Commissionerate - BENGALURU-SOUTH,Division - SOUTH DIVISION-8,Range - RANGE-BSD8",
+            "einvoiceStatus": "Yes",
+            "lstupdt": "",
+            "adadr": [],
+            "ctjCd": "",
+            "errorMsg": null,
+            "stjCd": ""
+          }
+        },
+        "company_record": null,
+        "state_code": "29",
+        "pan": "AAACI4798L"
+      },
+      "error": null
+    },
+    {
+      "gstin": "07AADCD4946L1ZC",
+      "status": "degraded",
+      "source": "live_api",
+      "data": {
+        "gstin_lookup": {
+          "legal_name": "ETERNAL LIMITED",
+          "registration_status": "Active",
+          "taxpayer_type": "Regular",
+          "address": {
+            "flno": "",
+            "lg": "",
+            "loc": "Delhi",
+            "pncd": "110019",
+            "bnm": "94 MEGHDOOT",
+            "city": "",
+            "lt": "",
+            "stcd": "Delhi",
+            "bno": "0",
+            "dst": "South Delhi",
+            "st": "NEHRU PLACE"
+          },
+          "raw": {
+            "ntcrbs": "SPO",
+            "adhrVFlag": "No",
+            "lgnm": "ETERNAL LIMITED",
+            "stj": "State - Delhi,Zone - Zone 10,Ward - Ward 300 (E-Commerce) (Jurisdictional Office)",
+            "dty": "Regular",
+            "cxdt": "",
+            "gstin": "07AADCD4946L1ZC",
+            "nba": [
+              "Service Provision",
+              "Supplier of Services",
+              "Warehouse / Depot",
+              "Office / Sale Office",
+              "Retail Business",
+              "Recipient of Goods or Services"
+            ],
+            "ekycVFlag": "No",
+            "cmpRt": "NA",
+            "rgdt": "01/07/2017",
+            "ctb": "Public Limited Company",
+            "pradr": {
+              "adr": "GROUND FLOOR 12A, 94 MEGHDOOT, NEHRU PLACE, Delhi, South Delhi, Delhi, 110019",
+              "addr": {
+                "flno": "",
+                "lg": "",
+                "loc": "Delhi",
+                "pncd": "110019",
+                "bnm": "94 MEGHDOOT",
+                "city": "",
+                "lt": "",
+                "stcd": "Delhi",
+                "bno": "0",
+                "dst": "South Delhi",
+                "st": "NEHRU PLACE"
+              }
+            },
+            "sts": "Active",
+            "tradeNam": "ETERNAL LIMITED",
+            "isFieldVisitConducted": "Yes",
+            "ctj": "State - CBIC,Zone - DELHI,Commissionerate - DELHI EAST,Division - NEHRU PLACE,Range - RANGE - 169",
+            "einvoiceStatus": "Yes",
+            "lstupdt": "",
+            "adadr": [],
+            "ctjCd": "",
+            "errorMsg": null,
+            "stjCd": ""
+          }
+        },
+        "company_record": null,
+        "state_code": "07",
+        "pan": "AADCD4946L"
+      },
+      "error": null
+    },
+    {
+      "gstin": "27AAFCN5072P1ZV",
+      "status": "degraded",
+      "source": "live_api",
+      "data": {
+        "gstin_lookup": {
+          "legal_name": "NYKAA E- RETAIL LIMITED",
+          "registration_status": "Active",
+          "taxpayer_type": "Regular",
+          "address": {
+            "flno": "",
+            "lg": "",
+            "loc": "Mumbai",
+            "pncd": "400013",
+            "bnm": "Sun Mill Compound",
+            "city": "",
+            "lt": "",
+            "stcd": "Maharashtra",
+            "bno": "0",
+            "dst": "Mumbai",
+            "st": "Lower Parel West"
+          },
+          "raw": {
+            "ntcrbs": "TRD:TRR",
+            "adhrVFlag": "Yes",
+            "lgnm": "NYKAA E- RETAIL LIMITED",
+            "stj": "State - Maharashtra,Zone - MUMBAI_NORTH_WEST,Division - MAZGAON,Charge - DELISLE_ROAD_701",
+            "dty": "Regular",
+            "cxdt": "",
+            "gstin": "27AAFCN5072P1ZV",
+            "nba": [
+              "Retail Business",
+              "Warehouse / Depot",
+              "Office / Sale Office",
+              "Export",
+              "Supplier of Services",
+              "Recipient of Goods or Services",
+              "Bonded Warehouse"
+            ],
+            "ekycVFlag": "Not Applicable",
+            "cmpRt": "NA",
+            "rgdt": "01/07/2017",
+            "ctb": "Public Limited Company",
+            "pradr": {
+              "adr": "104, Vasan Udyog Bhawan, Senapati Bapat Marg, Sun Mill Compound, Lower Parel West, Mumbai, Mumbai, Maharashtra, 400013",
+              "addr": {
+                "flno": "",
+                "lg": "",
+                "loc": "Mumbai",
+                "pncd": "400013",
+                "bnm": "Sun Mill Compound",
+                "city": "",
+                "lt": "",
+                "stcd": "Maharashtra",
+                "bno": "0",
+                "dst": "Mumbai",
+                "st": "Lower Parel West"
+              }
+            },
+            "sts": "Active",
+            "tradeNam": "NYKAA E-RETAIL LIMITED",
+            "isFieldVisitConducted": "No",
+            "adhrVdt": "18/09/2026",
+            "ctj": "State - CBIC,Zone - MUMBAI,Commissionerate - MUMBAI-CENTRAL,Division - DIVISION III,Range - RANGE-IV (Jurisdictional Office)",
+            "einvoiceStatus": "Yes",
+            "lstupdt": "",
+            "adadr": [],
+            "ctjCd": "",
+            "errorMsg": null,
+            "stjCd": ""
+          }
+        },
+        "company_record": null,
+        "state_code": "27",
+        "pan": "AAFCN5072P"
+      },
+      "error": null
+    },
+    {
+      "gstin": "27AAACH2702H2ZZ",
+      "status": "degraded",
+      "source": "live_api",
+      "data": {
+        "gstin_lookup": {
+          "legal_name": "HDFC BANK LIMITED",
+          "registration_status": "Active",
+          "taxpayer_type": "Regular",
+          "address": {
+            "flno": "",
+            "lg": "",
+            "loc": "Mumbai",
+            "pncd": "400042",
+            "bnm": "Kanjur Station Road",
+            "city": "",
+            "lt": "",
+            "stcd": "Maharashtra",
+            "bno": "0",
+            "dst": "Mumbai Suburban",
+            "st": "NEAR STATION ROAD"
+          },
+          "raw": {
+            "ntcrbs": "TRD:TWD",
+            "adhrVFlag": "Yes",
+            "lgnm": "HDFC BANK LIMITED",
+            "stj": "State - Maharashtra,Zone - MUMBAI_NORTH_EAST,Division - MULUND,Charge - BHANDUP-WEST_701",
+            "dty": "Regular",
+            "cxdt": "",
+            "gstin": "27AAACH2702H2ZZ",
+            "nba": [
+              "Wholesale Business",
+              "Others"
+            ],
+            "ekycVFlag": "Not Applicable",
+            "cmpRt": "NA",
+            "rgdt": "01/08/2017",
+            "ctb": "Public Limited Company",
+            "pradr": {
+              "adr": "4TH FLOOR, B Building, I-THINK TECHNO CAMPUS, Kanjur Station Road, NEAR STATION ROAD, Mumbai, Mumbai Suburban, Maharashtra, 400042",
+              "addr": {
+                "flno": "",
+                "lg": "",
+                "loc": "Mumbai",
+                "pncd": "400042",
+                "bnm": "Kanjur Station Road",
+                "city": "",
+                "lt": "",
+                "stcd": "Maharashtra",
+                "bno": "0",
+                "dst": "Mumbai Suburban",
+                "st": "NEAR STATION ROAD"
+              }
+            },
+            "sts": "Active",
+            "tradeNam": "HDFC BANK LIMITED",
+            "isFieldVisitConducted": "No",
+            "adhrVdt": "03/09/2026",
+            "ctj": "State - CBIC,Zone - MUMBAI,Commissionerate - NAVI MUMBAI,Division - DIVISION II,Range - RANGE-III (Jurisdictional Office)",
+            "einvoiceStatus": "Yes",
+            "lstupdt": "",
+            "adadr": [],
+            "ctjCd": "",
+            "errorMsg": null,
+            "stjCd": ""
+          }
+        },
+        "company_record": null,
+        "state_code": "27",
+        "pan": "AAACH2702H"
+      },
+      "error": null
+    }
+  ]
+}
