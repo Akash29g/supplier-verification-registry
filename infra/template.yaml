@@ -2,6 +2,15 @@ AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
 Description: Supplier Verification Registry — DynamoDB + Cognito
 
+Parameters:
+  GstincheckApiKey:
+    Type: String
+    NoEcho: true
+  DataGovInApiKey:
+    Type: String
+    NoEcho: true
+    Default: ""
+
 Globals:
   Function:
     Runtime: python3.12
@@ -12,6 +21,8 @@ Globals:
         SUPPLIERS_TABLE: !Ref SuppliersTable
         VERIFICATION_LOG_TABLE: !Ref VerificationLogTable
         USERS_TABLE: !Ref UsersTable
+        GSTINCHECK_API_KEY: !Ref GstincheckApiKey
+        DATA_GOV_IN_API_KEY: !Ref DataGovInApiKey
 
 Resources:
   SuppliersTable:
@@ -141,6 +152,31 @@ Resources:
           Type: Api
           Properties:
             Path: /auth/login
+            Method: post
+  
+  VerifySupplierFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../
+      Handler: lambda.verify_supplier.handler
+      Timeout: 15
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - cognito-idp:GetUser
+              Resource: !GetAtt UserPool.Arn
+            - Effect: Allow
+              Action:
+                - dynamodb:PutItem
+              Resource:
+                - !GetAtt SuppliersTable.Arn
+                - !GetAtt VerificationLogTable.Arn
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            Path: /suppliers/verify
             Method: post
 
 Outputs:
