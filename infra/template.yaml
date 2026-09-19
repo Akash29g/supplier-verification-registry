@@ -23,6 +23,11 @@ Globals:
         USERS_TABLE: !Ref UsersTable
         GSTINCHECK_API_KEY: !Ref GstincheckApiKey
         DATA_GOV_IN_API_KEY: !Ref DataGovInApiKey
+  Api:
+    Cors:
+      AllowMethods: "'GET,POST,OPTIONS'"
+      AllowHeaders: "'Content-Type,Authorization'"
+      AllowOrigin: "'*'"
 
 Resources:
   SuppliersTable:
