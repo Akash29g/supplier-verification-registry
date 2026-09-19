@@ -83,7 +83,7 @@ Resources:
   AuthSignupFunction:
     Type: AWS::Serverless::Function
     Properties:
-      CodeUri: lambda/
+      CodeUri: ../lambda/
       Handler: auth_signup.handler
       Environment:
         Variables:
@@ -104,7 +104,7 @@ Resources:
   AuthConfirmFunction:
     Type: AWS::Serverless::Function
     Properties:
-      CodeUri: lambda/
+      CodeUri: ../lambda/
       Handler: auth_confirm.handler
       Environment:
         Variables:
@@ -125,7 +125,7 @@ Resources:
   AuthLoginFunction:
     Type: AWS::Serverless::Function
     Properties:
-      CodeUri: lambda/
+      CodeUri: ../lambda/
       Handler: auth_login.handler
       Environment:
         Variables:
