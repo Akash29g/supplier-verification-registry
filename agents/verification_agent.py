@@ -26,6 +26,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from agents.gstin_utils import validate_gstin
+from agents.trace import step, now
 
 GSTINCHECK_BASE_URL = "https://sheet.gstincheck.co.in/check"
 DATA_GOV_IN_BASE_URL = "https://api.data.gov.in/resource"
@@ -224,15 +225,24 @@ def _call_data_gov_in(state_code, legal_name_hint, api_key):
     return None
 
 
-def verify_gstin(raw_gstin):
+def verify_gstin(raw_gstin, trace=None):
     """
     Main entry point. Never raises - always returns a VerificationResult so
     the orchestrator/API layer above never has to special-case exceptions
     from this module.
+
+    trace: optional list. If given, every real step below appends a
+    {agent, message, ok, ms} entry (see agents/trace.py) so the UI can show
+    what actually ran instead of a canned animation.
     """
     gstin = (raw_gstin or "").strip().upper()
 
+    t0 = now()
     format_check = validate_gstin(gstin)
+    step(trace, "verification",
+         "GSTIN format + Luhn mod-36 checksum: "
+         + ("valid" if format_check.is_valid else f"FAILED ({format_check.reason})"),
+         ok=format_check.is_valid, started=t0)
     if not format_check.is_valid:
         return VerificationResult(
             gstin=gstin,
@@ -249,14 +259,24 @@ def verify_gstin(raw_gstin):
     source_used = None
     last_error = None
 
+    t1 = now()
     try:
         gstin_lookup = _call_gstincheck(gstin, gstincheck_key)
         source_used = "gstincheck.co.in"
+        step(trace, "verification", "gstincheck.co.in lookup: record found",
+             ok=True, started=t1)
     except (TimeoutError, ConnectionError, RuntimeError) as e:
         last_error = str(e)
+        step(trace, "verification", f"gstincheck.co.in lookup failed: {last_error}",
+             ok=False, started=t1)
         # fall back rather than fail outright
+        t2 = now()
         gstin_lookup = _call_gstinapi_fallback(gstin, gstinapi_key)
         source_used = "gstinapi.in" if gstin_lookup else None
+        step(trace, "verification",
+             "gstinapi.in fallback: " + ("record found" if gstin_lookup
+                                         else "no result (fallback not configured or failed)"),
+             ok=bool(gstin_lookup), started=t2)
 
     if gstin_lookup is None:
         return VerificationResult(
@@ -268,10 +288,19 @@ def verify_gstin(raw_gstin):
 
     company_record = None
     if data_gov_key and format_check.state_code:
+        t3 = now()
         legal_name_hint = gstin_lookup.get("legal_name") if gstin_lookup else None
         company_record = _call_data_gov_in(
             format_check.state_code, legal_name_hint, data_gov_key
         )
+        step(trace, "verification",
+             "data.gov.in Company Master Data cross-reference: "
+             + ("matched a company record" if company_record
+                else "no match (best-effort, name-based)"),
+             ok=bool(company_record), started=t3)
+    else:
+        step(trace, "verification",
+             "data.gov.in cross-reference skipped (no API key configured)", ok=False)
 
     status = "ok" if (gstin_lookup and company_record) else "degraded"
 
@@ -293,4 +322,4 @@ if __name__ == "__main__":
     import sys
     test_gstin = sys.argv[1] if len(sys.argv) > 1 else "27AAPFU0939F1ZV"
     result = verify_gstin(test_gstin)
-    print(result.to_dict())
+    print(result.to_dict())

@@ -21,8 +21,14 @@ Globals:
         SUPPLIERS_TABLE: !Ref SuppliersTable
         VERIFICATION_LOG_TABLE: !Ref VerificationLogTable
         USERS_TABLE: !Ref UsersTable
+        STATS_TABLE: !Ref StatsTable
         GSTINCHECK_API_KEY: !Ref GstincheckApiKey
         DATA_GOV_IN_API_KEY: !Ref DataGovInApiKey
+  Api:
+    Cors:
+      AllowMethods: "'GET,POST,OPTIONS'"
+      AllowHeaders: "'Content-Type,Authorization'"
+      AllowOrigin: "'*'"
 
 Resources:
   SuppliersTable:
@@ -67,6 +73,18 @@ Resources:
           AttributeType: S
       KeySchema:
         - AttributeName: user_id
+          KeyType: HASH
+
+  StatsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "${AWS::StackName}-Stats"
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: stat_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: stat_id
           KeyType: HASH
 
   UserPool:
@@ -159,24 +177,122 @@ Resources:
     Properties:
       CodeUri: ../
       Handler: lambda.verify_supplier.handler
-      Timeout: 15
+      Timeout: 25
       Policies:
         - Statement:
             - Effect: Allow
               Action:
                 - cognito-idp:GetUser
               Resource: !GetAtt UserPool.Arn
-            - Effect: Allow
-              Action:
-                - dynamodb:PutItem
-              Resource:
-                - !GetAtt SuppliersTable.Arn
-                - !GetAtt VerificationLogTable.Arn
+        - DynamoDBCrudPolicy:
+            TableName: !Ref SuppliersTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref VerificationLogTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref StatsTable
       Events:
         Api:
           Type: Api
           Properties:
             Path: /suppliers/verify
+            Method: post
+
+  GetSuppliersFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../
+      Handler: lambda.get_suppliers.handler
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - cognito-idp:GetUser
+              Resource: !GetAtt UserPool.Arn
+        - DynamoDBReadPolicy:
+            TableName: !Ref SuppliersTable
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            Path: /suppliers
+            Method: get
+
+  GetHistoryFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../
+      Handler: lambda.get_history.handler
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - cognito-idp:GetUser
+              Resource: !GetAtt UserPool.Arn
+        - DynamoDBReadPolicy:
+            TableName: !Ref VerificationLogTable
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            Path: /history
+            Method: get
+
+  GetReportFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../
+      Handler: lambda.get_report.handler
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - cognito-idp:GetUser
+              Resource: !GetAtt UserPool.Arn
+        - DynamoDBReadPolicy:
+            TableName: !Ref VerificationLogTable
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            Path: /reports/{log_id}
+            Method: get
+
+  GetStatsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../
+      Handler: lambda.get_stats.handler
+      Policies:
+        - DynamoDBReadPolicy:
+            TableName: !Ref StatsTable
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            Path: /stats
+            Method: get
+
+  DemoSeedFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../
+      Handler: lambda.demo_seed.handler
+      Timeout: 20
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - cognito-idp:GetUser
+              Resource: !GetAtt UserPool.Arn
+        - DynamoDBCrudPolicy:
+            TableName: !Ref SuppliersTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref VerificationLogTable
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            Path: /demo/seed
             Method: post
 
 Outputs:
@@ -186,10 +302,12 @@ Outputs:
     Value: !Ref VerificationLogTable
   UsersTableName:
     Value: !Ref UsersTable
+  StatsTableName:
+    Value: !Ref StatsTable
   UserPoolId:
     Value: !Ref UserPool
   UserPoolClientId:
     Value: !Ref UserPoolClient
   ApiUrl:
     Description: Base URL for the API
-    Value: !Sub "https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/Prod"
+    Value: !Sub "https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/Prod"
