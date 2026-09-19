@@ -137,8 +137,8 @@ def test_reverify_without_bank_account_keeps_previously_declared_one(env):
 
 def test_seed_loads_4_real_plus_4_crafted_and_ring_is_detected_by_the_rules(env):
     code, out = call("demo_seed")
-    assert code == 200 and out["data"]["seeded"] == 8
-    assert out["meta"]["by_verdict"] == {"VERIFIED": 4, "RISK": 3, "REVIEW": 1}
+    assert code == 200 and out["data"]["seeded"] == 9
+    assert out["meta"]["by_verdict"] == {"VERIFIED": 5, "RISK": 3, "REVIEW": 1}
     rows = {s["gstin"]: s for s in call("get_suppliers")[1]["data"]}
     assert rows["07AAACT2727Q1ZY"]["verdict"] == "REVIEW"                      # shell company
     for g in ("29AAAPL1234C1ZA", "33AABCT3518Q1Z3", "06AAFCS1234D1ZV"):        # ring
@@ -149,8 +149,8 @@ def test_seed_loads_4_real_plus_4_crafted_and_ring_is_detected_by_the_rules(env)
 
 def test_seed_is_idempotent(env):
     call("demo_seed"); call("demo_seed")
-    assert call("get_suppliers")[1]["meta"]["total"] == 8
-    assert call("get_history")[1]["meta"]["total"] == 8
+    assert call("get_suppliers")[1]["meta"]["total"] == 9
+    assert call("get_history")[1]["meta"]["total"] == 9
 
 
 def test_history_sorted_newest_first_and_filterable(env):

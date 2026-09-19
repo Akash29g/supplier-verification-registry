@@ -309,6 +309,91 @@
         "pan": "AAACH2702H"
       },
       "error": null
+    },
+    {
+      "gstin": "27AAACT2727Q1ZW",
+      "status": "degraded",
+      "source": "live_api",
+      "data": {
+        "gstin_lookup": {
+          "legal_name": "TATA MOTORS PASSENGER VEHICLES LIMITED",
+          "registration_status": "Active",
+          "taxpayer_type": "Regular",
+          "address": {
+            "flno": "",
+            "lg": "",
+            "loc": "Pimpri Chinchwad",
+            "pncd": "411062",
+            "bnm": "Chikhali Road",
+            "city": "",
+            "lt": "",
+            "stcd": "Maharashtra",
+            "bno": "0",
+            "dst": "Pune",
+            "st": "Chikhali"
+          },
+          "raw": {
+            "ntcrbs": "MFT",
+            "adhrVFlag": "No",
+            "lgnm": "TATA MOTORS PASSENGER VEHICLES LIMITED",
+            "stj": "State - Maharashtra,Zone - PUNE_SOUTH_WEST,Division - PUNE_NORTH_WEST,Charge - PUNE CANTT_508",
+            "dty": "Regular",
+            "cxdt": "",
+            "gstin": "27AAACT2727Q1ZW",
+            "nba": [
+              "Factory / Manufacturing",
+              "Input Service Distributor (ISD)",
+              "Office / Sale Office",
+              "Retail Business",
+              "Service Provision",
+              "Recipient of Goods or Services",
+              "Works Contract",
+              "Wholesale Business",
+              "Warehouse / Depot",
+              "Bonded Warehouse",
+              "Others",
+              "Export",
+              "Import",
+              "Supplier of Services",
+              "Leasing Business"
+            ],
+            "ekycVFlag": "No",
+            "cmpRt": "NA",
+            "rgdt": "01/07/2017",
+            "ctb": "Public Limited Company",
+            "pradr": {
+              "adr": "Sector No. 15 and 15A PCNTDA, K Block, Chikhali Road, Chikhali, Pimpri Chinchwad, Pune, Maharashtra, 411062",
+              "addr": {
+                "flno": "",
+                "lg": "",
+                "loc": "Pimpri Chinchwad",
+                "pncd": "411062",
+                "bnm": "Chikhali Road",
+                "city": "",
+                "lt": "",
+                "stcd": "Maharashtra",
+                "bno": "0",
+                "dst": "Pune",
+                "st": "Chikhali"
+              }
+            },
+            "sts": "Active",
+            "tradeNam": "TATA MOTORS PASSENGER VEHICLES LIMITED",
+            "isFieldVisitConducted": "No",
+            "ctj": "State - CBIC,Zone - PUNE,Commissionerate - PUNE - I,Division - DIVISION-I TALEGAON,Range - RANGE-V (Jurisdictional Office)",
+            "einvoiceStatus": "Yes",
+            "lstupdt": "",
+            "adadr": [],
+            "ctjCd": "",
+            "errorMsg": null,
+            "stjCd": ""
+          }
+        },
+        "company_record": null,
+        "state_code": "27",
+        "pan": "AAACT2727Q"
+      },
+      "error": null
     }
   ]
 }
