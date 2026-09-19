@@ -79,69 +79,69 @@ Resources:
       ExplicitAuthFlows:
         - ALLOW_USER_PASSWORD_AUTH
         - ALLOW_REFRESH_TOKEN_AUTH
-  
+
   AuthSignupFunction:
-  Type: AWS::Serverless::Function
-  Properties:
-    CodeUri: lambda/
-    Handler: auth_signup.handler
-    Environment:
-      Variables:
-        USER_POOL_CLIENT_ID: !Ref UserPoolClient
-    Policies:
-      - Statement:
-          - Effect: Allow
-            Action:
-              - cognito-idp:SignUp
-            Resource: !GetAtt UserPool.Arn
-    Events:
-      Api:
-        Type: Api
-        Properties:
-          Path: /auth/signup
-          Method: post
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: lambda/
+      Handler: auth_signup.handler
+      Environment:
+        Variables:
+          USER_POOL_CLIENT_ID: !Ref UserPoolClient
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - cognito-idp:SignUp
+              Resource: !GetAtt UserPool.Arn
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            Path: /auth/signup
+            Method: post
 
-AuthConfirmFunction:
-  Type: AWS::Serverless::Function
-  Properties:
-    CodeUri: lambda/
-    Handler: auth_confirm.handler
-    Environment:
-      Variables:
-        USER_POOL_CLIENT_ID: !Ref UserPoolClient
-    Policies:
-      - Statement:
-          - Effect: Allow
-            Action:
-              - cognito-idp:ConfirmSignUp
-            Resource: !GetAtt UserPool.Arn
-    Events:
-      Api:
-        Type: Api
-        Properties:
-          Path: /auth/confirm
-          Method: post
+  AuthConfirmFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: lambda/
+      Handler: auth_confirm.handler
+      Environment:
+        Variables:
+          USER_POOL_CLIENT_ID: !Ref UserPoolClient
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - cognito-idp:ConfirmSignUp
+              Resource: !GetAtt UserPool.Arn
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            Path: /auth/confirm
+            Method: post
 
-AuthLoginFunction:
-  Type: AWS::Serverless::Function
-  Properties:
-    CodeUri: lambda/
-    Handler: auth_login.handler
-    Environment:
-      Variables:
-        USER_POOL_CLIENT_ID: !Ref UserPoolClient
-    Policies:
-      - Statement:
-          - Effect: Allow
-            Action:
-              - cognito-idp:InitiateAuth
-            Resource: !GetAtt UserPool.Arn
-    Events:
-      Api:
-        Type: Api
-        Properties:
-          Path: /auth/login
-          Method: post
+  AuthLoginFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: lambda/
+      Handler: auth_login.handler
+      Environment:
+        Variables:
+          USER_POOL_CLIENT_ID: !Ref UserPoolClient
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - cognito-idp:InitiateAuth
+              Resource: !GetAtt UserPool.Arn
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            Path: /auth/login
+            Method: post
 
 Outputs:
   SuppliersTableName:
