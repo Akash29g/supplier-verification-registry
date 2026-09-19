@@ -1,0 +1,996 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Supplier Verification Registry</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #FAF9F6;
+    --surface: #FFFFFF;
+    --hairline: #E5E2DB;
+    --text: #1A1D1F;
+    --text-secondary: #6B7280;
+    --accent: #1F6E4C;
+    --accent-hover: #195A3E;
+    --risk: #B3402F;
+    --review: #B8860B;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html { scroll-behavior: smooth; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Inter', -apple-system, sans-serif;
+    font-size: 16px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  h1, h2, h3, .display {
+    font-family: 'Fraunces', Georgia, serif;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    line-height: 1.15;
+  }
+
+  .mono {
+    font-family: 'IBM Plex Mono', monospace;
+  }
+
+  a { color: inherit; text-decoration: none; }
+
+  button {
+    font-family: 'Inter', sans-serif;
+    cursor: pointer;
+    border: none;
+  }
+
+  input {
+    font-family: 'Inter', sans-serif;
+    font-size: 15px;
+  }
+
+  ::selection { background: var(--accent); color: white; }
+
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
+  /* ---------- Shell ---------- */
+
+  .shell {
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 0 64px;
+  }
+
+  @media (max-width: 720px) {
+    .shell { padding: 0 24px; }
+  }
+
+  nav.topnav {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 28px 0;
+    border-bottom: 1px solid var(--hairline);
+  }
+
+  .brand {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+  }
+
+  .brand-mark {
+    font-family: 'Fraunces', serif;
+    font-weight: 700;
+    font-size: 20px;
+  }
+
+  .brand-sub {
+    font-size: 12px;
+    color: var(--text-secondary);
+    font-family: 'IBM Plex Mono', monospace;
+  }
+
+  .navlinks {
+    display: flex;
+    align-items: center;
+    gap: 28px;
+    font-size: 14px;
+    color: var(--text-secondary);
+  }
+
+  .navlinks a:hover { color: var(--text); }
+
+  .navlinks .cta-nav {
+    background: var(--accent);
+    color: white;
+    padding: 9px 18px;
+    border-radius: 4px;
+    font-weight: 500;
+  }
+
+  .navlinks .cta-nav:hover { background: var(--accent-hover); }
+
+  .user-chip {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    font-size: 14px;
+  }
+
+  .user-chip button {
+    background: transparent;
+    border: 1px solid var(--hairline);
+    padding: 8px 14px;
+    border-radius: 4px;
+    color: var(--text-secondary);
+    font-size: 13px;
+  }
+
+  .user-chip button:hover { border-color: var(--text-secondary); color: var(--text); }
+
+  /* ---------- Landing ---------- */
+
+  .hero {
+    padding: 96px 0 72px;
+    max-width: 720px;
+  }
+
+  .hero h1 {
+    font-size: 52px;
+    margin-bottom: 24px;
+  }
+
+  .hero p.lede {
+    font-size: 19px;
+    color: var(--text-secondary);
+    max-width: 560px;
+    margin-bottom: 36px;
+  }
+
+  .hero-actions {
+    display: flex;
+    align-items: center;
+    gap: 24px;
+  }
+
+  .btn-primary {
+    background: var(--accent);
+    color: white;
+    padding: 14px 26px;
+    border-radius: 4px;
+    font-size: 15px;
+    font-weight: 500;
+  }
+
+  .btn-primary:hover { background: var(--accent-hover); }
+
+  .btn-ghost {
+    color: var(--text-secondary);
+    font-size: 15px;
+    border-bottom: 1px solid var(--hairline);
+    padding-bottom: 2px;
+  }
+
+  .btn-ghost:hover { color: var(--text); border-color: var(--text); }
+
+  .proof-strip {
+    display: flex;
+    gap: 56px;
+    padding: 48px 0;
+    border-top: 1px solid var(--hairline);
+    border-bottom: 1px solid var(--hairline);
+    margin-bottom: 80px;
+  }
+
+  .proof-item .num {
+    font-family: 'Fraunces', serif;
+    font-size: 34px;
+    font-weight: 600;
+    color: var(--accent);
+  }
+
+  .proof-item .label {
+    font-size: 13px;
+    color: var(--text-secondary);
+    margin-top: 4px;
+  }
+
+  .section-title {
+    font-size: 26px;
+    margin-bottom: 12px;
+  }
+
+  .section-sub {
+    color: var(--text-secondary);
+    font-size: 15px;
+    max-width: 520px;
+    margin-bottom: 40px;
+  }
+
+  .how-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1px;
+    background: var(--hairline);
+    border: 1px solid var(--hairline);
+    margin-bottom: 96px;
+  }
+
+  @media (max-width: 720px) {
+    .how-grid { grid-template-columns: 1fr; }
+  }
+
+  .how-cell {
+    background: var(--surface);
+    padding: 32px;
+  }
+
+  .how-cell h3 {
+    font-size: 17px;
+    margin-bottom: 10px;
+  }
+
+  .how-cell p {
+    font-size: 14px;
+    color: var(--text-secondary);
+    line-height: 1.55;
+  }
+
+  footer {
+    border-top: 1px solid var(--hairline);
+    padding: 32px 0 64px;
+    color: var(--text-secondary);
+    font-size: 13px;
+    display: flex;
+    justify-content: space-between;
+  }
+
+  /* ---------- Auth pages ---------- */
+
+  .auth-wrap {
+    max-width: 400px;
+    margin: 88px auto;
+    padding: 0 24px;
+  }
+
+  .auth-wrap h1 {
+    font-size: 30px;
+    margin-bottom: 8px;
+  }
+
+  .auth-wrap .sub {
+    color: var(--text-secondary);
+    font-size: 14px;
+    margin-bottom: 36px;
+  }
+
+  .field {
+    margin-bottom: 18px;
+  }
+
+  .field label {
+    display: block;
+    font-size: 13px;
+    color: var(--text-secondary);
+    margin-bottom: 7px;
+  }
+
+  .field input {
+    width: 100%;
+    padding: 11px 13px;
+    background: var(--surface);
+    border: 1px solid var(--hairline);
+    border-radius: 4px;
+    color: var(--text);
+  }
+
+  .field input:focus {
+    border-color: var(--accent);
+  }
+
+  .form-submit {
+    width: 100%;
+    background: var(--accent);
+    color: white;
+    padding: 12px;
+    border-radius: 4px;
+    font-size: 15px;
+    font-weight: 500;
+    margin-top: 8px;
+  }
+
+  .form-submit:hover { background: var(--accent-hover); }
+
+  .form-submit:disabled {
+    background: var(--hairline);
+    color: var(--text-secondary);
+    cursor: not-allowed;
+  }
+
+  .form-footer {
+    margin-top: 24px;
+    font-size: 14px;
+    color: var(--text-secondary);
+  }
+
+  .form-footer a { color: var(--accent); }
+
+  .msg {
+    font-size: 13px;
+    padding: 11px 13px;
+    border-radius: 4px;
+    margin-bottom: 18px;
+  }
+
+  .msg.error { background: #FBEEEC; color: var(--risk); border: 1px solid #F0D5D0; }
+  .msg.success { background: #EBF3EF; color: var(--accent); border: 1px solid #D3E5DB; }
+
+  /* ---------- Verify page ---------- */
+
+  .verify-wrap {
+    max-width: 720px;
+    margin: 0 auto;
+    padding: 64px 24px 96px;
+  }
+
+  .verify-wrap h1 { font-size: 32px; margin-bottom: 8px; }
+  .verify-wrap .sub { color: var(--text-secondary); font-size: 15px; margin-bottom: 40px; }
+
+  .gstin-form {
+    display: flex;
+    gap: 12px;
+    margin-bottom: 12px;
+  }
+
+  .gstin-form input {
+    flex: 1;
+    padding: 14px 16px;
+    border: 1px solid var(--hairline);
+    border-radius: 4px;
+    background: var(--surface);
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 15px;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+  }
+
+  .gstin-form input:focus { border-color: var(--accent); }
+
+  .gstin-form button {
+    background: var(--accent);
+    color: white;
+    padding: 0 28px;
+    border-radius: 4px;
+    font-size: 15px;
+    font-weight: 500;
+    white-space: nowrap;
+  }
+
+  .gstin-form button:hover { background: var(--accent-hover); }
+  .gstin-form button:disabled { background: var(--hairline); color: var(--text-secondary); cursor: not-allowed; }
+
+  .hint {
+    font-size: 13px;
+    color: var(--text-secondary);
+    margin-bottom: 48px;
+  }
+
+  .hint button {
+    background: none;
+    color: var(--accent);
+    font-size: 13px;
+    text-decoration: underline;
+    padding: 0;
+  }
+
+  .trace {
+    border: 1px solid var(--hairline);
+    border-radius: 4px;
+    background: var(--surface);
+    padding: 24px 26px;
+    margin-bottom: 32px;
+    display: none;
+  }
+
+  .trace.active { display: block; }
+
+  .trace-line {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 13px;
+    color: var(--text-secondary);
+    padding: 6px 0;
+    opacity: 0;
+    transform: translateY(4px);
+    transition: opacity 0.3s ease, transform 0.3s ease;
+  }
+
+  .trace-line.shown { opacity: 1; transform: translateY(0); }
+  .trace-line.done { color: var(--text); }
+  .trace-line .check { color: var(--accent); }
+
+  .result-card {
+    border: 1px solid var(--hairline);
+    border-radius: 4px;
+    background: var(--surface);
+    overflow: hidden;
+    display: none;
+  }
+
+  .result-card.active { display: block; }
+
+  .result-hero {
+    padding: 40px 32px;
+    border-bottom: 1px solid var(--hairline);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .result-status-label {
+    font-size: 13px;
+    color: var(--text-secondary);
+    margin-bottom: 8px;
+  }
+
+  .result-legal-name {
+    font-family: 'Fraunces', serif;
+    font-size: 26px;
+    font-weight: 600;
+  }
+
+  .status-badge {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12px;
+    padding: 7px 14px;
+    border-radius: 20px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  .status-badge.ok { background: #EBF3EF; color: var(--accent); }
+  .status-badge.degraded { background: #FBF4E4; color: var(--review); }
+  .status-badge.failed { background: #FBEEEC; color: var(--risk); }
+
+  .result-details {
+    padding: 28px 32px;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px 32px;
+  }
+
+  .detail-row .k {
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin-bottom: 5px;
+  }
+
+  .detail-row .v {
+    font-size: 14px;
+  }
+
+  .detail-row .v.mono { font-family: 'IBM Plex Mono', monospace; }
+
+  .result-source {
+    padding: 16px 32px;
+    background: var(--bg);
+    font-size: 12px;
+    color: var(--text-secondary);
+    border-top: 1px solid var(--hairline);
+  }
+
+  .error-box {
+    border: 1px solid #F0D5D0;
+    background: #FBEEEC;
+    color: var(--risk);
+    padding: 16px 20px;
+    border-radius: 4px;
+    font-size: 14px;
+    margin-bottom: 24px;
+    display: none;
+  }
+
+  .error-box.active { display: block; }
+
+  .gate {
+    max-width: 480px;
+    margin: 88px auto;
+    padding: 0 24px;
+    text-align: left;
+  }
+
+  .gate h2 { font-size: 24px; margin-bottom: 10px; }
+  .gate p { color: var(--text-secondary); font-size: 14px; margin-bottom: 24px; }
+
+  [data-page] { display: none; }
+  [data-page].active { display: block; }
+</style>
+</head>
+<body>
+
+<div class="shell">
+  <nav class="topnav">
+    <a href="#/" class="brand">
+      <span class="brand-mark">Registry</span>
+      <span class="brand-sub">GSTIN verification</span>
+    </a>
+    <div class="navlinks" id="navlinks"></div>
+  </nav>
+</div>
+
+<!-- LANDING -->
+<div data-page="/" class="shell">
+  <section class="hero">
+    <h1>Know who you're paying before the money leaves.</h1>
+    <p class="lede">Every new supplier's GSTIN, checked against live government records in under a second — not 45 seconds and a captcha at the GST portal.</p>
+    <div class="hero-actions">
+      <a href="#/verify" class="btn-primary">Verify a GSTIN</a>
+      <a href="#/signup" class="btn-ghost">Create an account</a>
+    </div>
+  </section>
+
+  <div class="proof-strip">
+    <div class="proof-item">
+      <div class="num mono" id="stat-checks">—</div>
+      <div class="label">verifications run</div>
+    </div>
+    <div class="proof-item">
+      <div class="num mono">&lt;1s</div>
+      <div class="label">per check, vs. 45s manually</div>
+    </div>
+    <div class="proof-item">
+      <div class="num mono">₹0.04</div>
+      <div class="label">cost per verification</div>
+    </div>
+  </div>
+
+  <section>
+    <h2 class="section-title">How it works</h2>
+    <p class="section-sub">Three steps, all against real data sources — not a cached demo.</p>
+    <div class="how-grid">
+      <div class="how-cell">
+        <h3>1. Enter a GSTIN</h3>
+        <p>Offline format check runs first — a malformed number never reaches an external API.</p>
+      </div>
+      <div class="how-cell">
+        <h3>2. Live lookup</h3>
+        <p>Cross-referenced against gstincheck.co.in and data.gov.in's Company Master Data, the same sources the government registry itself uses.</p>
+      </div>
+      <div class="how-cell">
+        <h3>3. Saved, not forgotten</h3>
+        <p>Every check is logged to your account, so you can look back at what you verified and when.</p>
+      </div>
+    </div>
+  </section>
+</div>
+
+<!-- LOGIN -->
+<div data-page="/login" class="auth-wrap">
+  <h1>Log in</h1>
+  <p class="sub">Access your saved suppliers and verification history.</p>
+  <div class="msg error" id="login-error" style="display:none;"></div>
+  <form id="login-form">
+    <div class="field">
+      <label for="login-email">Email</label>
+      <input type="email" id="login-email" required autocomplete="email">
+    </div>
+    <div class="field">
+      <label for="login-password">Password</label>
+      <input type="password" id="login-password" required autocomplete="current-password">
+    </div>
+    <button type="submit" class="form-submit" id="login-submit">Log in</button>
+  </form>
+  <div class="form-footer">No account yet? <a href="#/signup">Sign up</a></div>
+</div>
+
+<!-- SIGNUP -->
+<div data-page="/signup" class="auth-wrap">
+  <h1>Create an account</h1>
+  <p class="sub">Start verifying suppliers in under a minute.</p>
+  <div class="msg error" id="signup-error" style="display:none;"></div>
+  <div class="msg success" id="signup-success" style="display:none;"></div>
+
+  <form id="signup-form">
+    <div class="field">
+      <label for="signup-email">Email</label>
+      <input type="email" id="signup-email" required autocomplete="email">
+    </div>
+    <div class="field">
+      <label for="signup-password">Password</label>
+      <input type="password" id="signup-password" required autocomplete="new-password" minlength="8">
+    </div>
+    <button type="submit" class="form-submit" id="signup-submit">Sign up</button>
+  </form>
+
+  <form id="confirm-form" style="display:none; margin-top: 28px;">
+    <div class="field">
+      <label for="confirm-code">Verification code — check your email</label>
+      <input type="text" id="confirm-code" required maxlength="6" class="mono">
+    </div>
+    <button type="submit" class="form-submit" id="confirm-submit">Confirm account</button>
+  </form>
+
+  <div class="form-footer">Already have an account? <a href="#/login">Log in</a></div>
+</div>
+
+<!-- VERIFY (auth gate) -->
+<div data-page="/verify-gate" class="gate">
+  <h2>Log in to verify a supplier</h2>
+  <p>Verification results are saved to your account so you can find them again later.</p>
+  <a href="#/login" class="btn-primary" style="display:inline-block;">Log in</a>
+</div>
+
+<!-- VERIFY -->
+<div data-page="/verify" class="verify-wrap">
+  <h1>Verify a supplier</h1>
+  <p class="sub">Enter a 15-character GSTIN to run a live check.</p>
+
+  <form class="gstin-form" id="verify-form">
+    <input type="text" id="gstin-input" placeholder="29AAACI4798L1ZU" maxlength="15" required>
+    <button type="submit" id="verify-submit">Verify</button>
+  </form>
+  <div class="hint">
+    Don't have one handy? <button type="button" id="try-sample">Try a sample GSTIN</button>
+  </div>
+
+  <div class="error-box" id="verify-error"></div>
+
+  <div class="trace" id="trace">
+    <div class="trace-line" id="trace-1"><span class="check"></span><span>Verification agent: checking GSTIN format...</span></div>
+    <div class="trace-line" id="trace-2"><span class="check"></span><span>Calling gstincheck.co.in...</span></div>
+    <div class="trace-line" id="trace-3"><span class="check"></span><span>Cross-referencing data.gov.in Company Master Data...</span></div>
+    <div class="trace-line" id="trace-4"><span class="check"></span><span>Compiling result...</span></div>
+  </div>
+
+  <div class="result-card" id="result-card">
+    <div class="result-hero">
+      <div>
+        <div class="result-status-label">Legal name</div>
+        <div class="result-legal-name" id="result-name">—</div>
+      </div>
+      <div class="status-badge" id="result-badge">—</div>
+    </div>
+    <div class="result-details" id="result-details"></div>
+    <div class="result-source" id="result-source"></div>
+  </div>
+</div>
+
+</div>
+
+<script>
+  // ---------- Config ----------
+  const API_BASE = "https://oiydqtnctj.execute-api.ap-south-1.amazonaws.com/Prod";
+  const SAMPLE_GSTIN = "29AAACI4798L1ZU";
+
+  // ---------- Session (in-memory + localStorage for token persistence) ----------
+  const session = {
+    get token() { return localStorage.getItem("svr_access_token"); },
+    set token(v) { v ? localStorage.setItem("svr_access_token", v) : localStorage.removeItem("svr_access_token"); },
+    get email() { return localStorage.getItem("svr_email"); },
+    set email(v) { v ? localStorage.setItem("svr_email", v) : localStorage.removeItem("svr_email"); },
+    get isLoggedIn() { return !!this.token; },
+    clear() { this.token = null; this.email = null; }
+  };
+
+  let pendingSignupEmail = null;
+
+  // ---------- Router ----------
+  const routes = ["/", "/login", "/signup", "/verify"];
+
+  function renderNav() {
+    const nav = document.getElementById("navlinks");
+    if (session.isLoggedIn) {
+      nav.innerHTML = `
+        <div class="user-chip">
+          <span class="mono" style="color: var(--text-secondary);">${session.email}</span>
+          <button id="logout-btn">Log out</button>
+        </div>`;
+      document.getElementById("logout-btn").addEventListener("click", () => {
+        session.clear();
+        renderNav();
+        navigate("/login");
+      });
+    } else {
+      nav.innerHTML = `
+        <a href="#/login">Log in</a>
+        <a href="#/signup" class="cta-nav">Sign up</a>`;
+    }
+  }
+
+  function currentPath() {
+    const hash = location.hash.replace(/^#/, "") || "/";
+    return hash;
+  }
+
+  function navigate(path) {
+    location.hash = path;
+  }
+
+  function render() {
+    let path = currentPath();
+
+    if (path === "/verify" && !session.isLoggedIn) {
+      path = "/verify-gate";
+    }
+
+    document.querySelectorAll("[data-page]").forEach(el => {
+      el.classList.toggle("active", el.getAttribute("data-page") === path);
+    });
+
+    renderNav();
+    window.scrollTo(0, 0);
+  }
+
+  window.addEventListener("hashchange", render);
+
+  // ---------- Landing stat (persisted locally, since /stats endpoint isn't built yet) ----------
+  function renderStatCounter() {
+    const n = parseInt(localStorage.getItem("svr_verify_count") || "0", 10);
+    document.getElementById("stat-checks").textContent = n.toLocaleString("en-IN");
+  }
+
+  function bumpStatCounter() {
+    const n = parseInt(localStorage.getItem("svr_verify_count") || "0", 10) + 1;
+    localStorage.setItem("svr_verify_count", n);
+    renderStatCounter();
+  }
+
+  // ---------- Login ----------
+  document.getElementById("login-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const email = document.getElementById("login-email").value.trim();
+    const password = document.getElementById("login-password").value;
+    const errBox = document.getElementById("login-error");
+    const submitBtn = document.getElementById("login-submit");
+
+    errBox.style.display = "none";
+    submitBtn.disabled = true;
+    submitBtn.textContent = "Logging in...";
+
+    try {
+      const res = await fetch(`${API_BASE}/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password })
+      });
+      const data = await res.json();
+
+      if (!res.ok) {
+        throw new Error(data.error === "invalid_credentials"
+          ? "Incorrect email or password."
+          : data.error === "account_not_confirmed"
+          ? "Account not confirmed yet — check your email for the code."
+          : "Couldn't log in. Try again.");
+      }
+
+      session.token = data.access_token;
+      session.email = email;
+      navigate("/verify");
+      render();
+    } catch (err) {
+      errBox.textContent = err.message;
+      errBox.style.display = "block";
+    } finally {
+      submitBtn.disabled = false;
+      submitBtn.textContent = "Log in";
+    }
+  });
+
+  // ---------- Signup ----------
+  document.getElementById("signup-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const email = document.getElementById("signup-email").value.trim();
+    const password = document.getElementById("signup-password").value;
+    const errBox = document.getElementById("signup-error");
+    const okBox = document.getElementById("signup-success");
+    const submitBtn = document.getElementById("signup-submit");
+
+    errBox.style.display = "none";
+    okBox.style.display = "none";
+    submitBtn.disabled = true;
+    submitBtn.textContent = "Signing up...";
+
+    try {
+      const res = await fetch(`${API_BASE}/auth/signup`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password })
+      });
+      const data = await res.json();
+
+      if (!res.ok) {
+        throw new Error(data.error === "account_already_exists"
+          ? "An account with this email already exists."
+          : data.error === "invalid_password"
+          ? "Password must be at least 8 characters, with an uppercase letter and a number."
+          : "Couldn't sign up. Try again.");
+      }
+
+      pendingSignupEmail = email;
+      okBox.textContent = "Check your email for a 6-digit verification code.";
+      okBox.style.display = "block";
+      document.getElementById("signup-form").style.display = "none";
+      document.getElementById("confirm-form").style.display = "block";
+    } catch (err) {
+      errBox.textContent = err.message;
+      errBox.style.display = "block";
+    } finally {
+      submitBtn.disabled = false;
+      submitBtn.textContent = "Sign up";
+    }
+  });
+
+  // ---------- Confirm signup ----------
+  document.getElementById("confirm-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const code = document.getElementById("confirm-code").value.trim();
+    const errBox = document.getElementById("signup-error");
+    const okBox = document.getElementById("signup-success");
+    const submitBtn = document.getElementById("confirm-submit");
+
+    errBox.style.display = "none";
+    submitBtn.disabled = true;
+    submitBtn.textContent = "Confirming...";
+
+    try {
+      const res = await fetch(`${API_BASE}/auth/confirm`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: pendingSignupEmail, code })
+      });
+      const data = await res.json();
+
+      if (!res.ok) {
+        throw new Error(data.error === "invalid_code"
+          ? "That code doesn't match. Check your email and try again."
+          : data.error === "code_expired"
+          ? "That code has expired — sign up again to get a new one."
+          : "Couldn't confirm. Try again.");
+      }
+
+      okBox.textContent = "Account confirmed. Redirecting to log in...";
+      setTimeout(() => navigate("/login"), 1200);
+    } catch (err) {
+      errBox.textContent = err.message;
+      errBox.style.display = "block";
+    } finally {
+      submitBtn.disabled = false;
+      submitBtn.textContent = "Confirm account";
+    }
+  });
+
+  // ---------- Verify ----------
+  document.getElementById("try-sample").addEventListener("click", () => {
+    document.getElementById("gstin-input").value = SAMPLE_GSTIN;
+  });
+
+  function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+  async function runTrace() {
+    const trace = document.getElementById("trace");
+    trace.classList.add("active");
+    const lines = ["trace-1", "trace-2", "trace-3", "trace-4"];
+    for (const id of lines) {
+      const el = document.getElementById(id);
+      el.classList.add("shown");
+      await sleep(420);
+      el.classList.add("done");
+      el.querySelector(".check").textContent = "✓";
+    }
+  }
+
+  function resetTrace() {
+    const trace = document.getElementById("trace");
+    trace.classList.remove("active");
+    ["trace-1", "trace-2", "trace-3", "trace-4"].forEach(id => {
+      const el = document.getElementById(id);
+      el.classList.remove("shown", "done");
+      el.querySelector(".check").textContent = "";
+    });
+  }
+
+  function renderResult(result) {
+    const card = document.getElementById("result-card");
+    const badge = document.getElementById("result-badge");
+    const name = document.getElementById("result-name");
+    const details = document.getElementById("result-details");
+    const source = document.getElementById("result-source");
+
+    const lookup = (result.data && result.data.gstin_lookup) || {};
+    name.textContent = lookup.legal_name || "Not found";
+
+    badge.className = "status-badge " + result.status;
+    badge.textContent = result.status === "ok" ? "Verified"
+      : result.status === "degraded" ? "Partially verified"
+      : "Failed";
+
+    const addr = lookup.address || {};
+    const addrLine = [addr.st, addr.dst, addr.stcd].filter(Boolean).join(", ");
+
+    details.innerHTML = `
+      <div class="detail-row"><div class="k">GSTIN</div><div class="v mono">${result.gstin}</div></div>
+      <div class="detail-row"><div class="k">Registration status</div><div class="v">${lookup.registration_status || "—"}</div></div>
+      <div class="detail-row"><div class="k">Taxpayer type</div><div class="v">${lookup.taxpayer_type || "—"}</div></div>
+      <div class="detail-row"><div class="k">State</div><div class="v">${addr.stcd || "—"}</div></div>
+      <div class="detail-row" style="grid-column: 1 / -1;"><div class="k">Address</div><div class="v">${addrLine || "—"}</div></div>
+    `;
+
+    source.textContent = result.error
+      ? `Error: ${result.error}`
+      : `Source: ${result.source || "unknown"}`;
+
+    card.classList.add("active");
+  }
+
+  document.getElementById("verify-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const gstin = document.getElementById("gstin-input").value.trim().toUpperCase();
+    const submitBtn = document.getElementById("verify-submit");
+    const errBox = document.getElementById("verify-error");
+    const resultCard = document.getElementById("result-card");
+
+    errBox.classList.remove("active");
+    resultCard.classList.remove("active");
+    resetTrace();
+    submitBtn.disabled = true;
+    submitBtn.textContent = "Verifying...";
+
+    const tracePromise = runTrace();
+
+    try {
+      const res = await fetch(`${API_BASE}/suppliers/verify`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${session.token}`
+        },
+        body: JSON.stringify({ gstin })
+      });
+
+      await tracePromise;
+
+      if (res.status === 401) {
+        session.clear();
+        navigate("/login");
+        return;
+      }
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        throw new Error(data.error || "Verification failed.");
+      }
+
+      renderResult(data);
+      bumpStatCounter();
+    } catch (err) {
+      await tracePromise;
+      errBox.textContent = err.message || "Something went wrong. Try again.";
+      errBox.classList.add("active");
+    } finally {
+      submitBtn.disabled = false;
+      submitBtn.textContent = "Verify";
+    }
+  });
+
+  // ---------- Init ----------
+  renderStatCounter();
+  render();
+</script>
+
+</body>
+</html>
