@@ -58,7 +58,7 @@ Resources:
         - AttributeName: user_id
           KeyType: HASH
 
-    UserPool:
+  UserPool:
     Type: AWS::Cognito::UserPool
     Properties:
       UserPoolName: !Sub "${AWS::StackName}-users"
