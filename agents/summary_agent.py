@@ -4,6 +4,7 @@ Never blocks the pipeline: any failure falls back to a deterministic template.
 """
 import json
 import os
+import time
 
 import boto3
 from botocore.exceptions import ClientError
@@ -13,11 +14,29 @@ from agents.trace import step, now
 BEDROCK_MODEL_ID = os.environ.get("BEDROCK_MODEL_ID", "apac.amazon.nova-lite-v1:0")
 BEDROCK_REGION = os.environ.get("BEDROCK_REGION", os.environ.get("AWS_REGION", "ap-south-1"))
 
-_client = None
+BEDROCK_ROLE_ARN = os.environ.get("BEDROCK_ROLE_ARN", "")
 
+_client = None
+_client_expiry = 0.0
 
 def _bedrock():
-    global _client
+    global _client, _client_expiry
+    if BEDROCK_ROLE_ARN:
+        if _client is None or time.time() > _client_expiry - 300:
+            creds = boto3.client("sts").assume_role(
+                RoleArn=BEDROCK_ROLE_ARN,
+                RoleSessionName="supplier-registry-summary",
+                DurationSeconds=3600,
+            )["Credentials"]
+            _client = boto3.client(
+                "bedrock-runtime",
+                region_name=BEDROCK_REGION,
+                aws_access_key_id=creds["AccessKeyId"],
+                aws_secret_access_key=creds["SecretAccessKey"],
+                aws_session_token=creds["SessionToken"],
+            )
+            _client_expiry = creds["Expiration"].timestamp()
+        return _client
     if _client is None:
         _client = boto3.client("bedrock-runtime", region_name=BEDROCK_REGION)
     return _client
