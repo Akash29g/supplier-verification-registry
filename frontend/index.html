@@ -1104,6 +1104,200 @@
           print-color-adjust: exact;
         }
       }
+
+      /* ---------- Bulk ---------- */
+      .bulk-input-row {
+        display: grid;
+        grid-template-columns: 1fr 220px;
+        gap: 16px;
+        margin-bottom: 20px;
+      }
+      .bulk-textarea {
+        width: 100%;
+        min-height: 160px;
+        resize: vertical;
+        padding: 13px;
+        background: var(--surface);
+        border: 1px solid var(--hairline);
+        border-radius: 4px;
+        color: var(--text);
+        font-size: 13px;
+        line-height: 1.6;
+      }
+      .bulk-textarea:focus {
+        border-color: var(--accent);
+      }
+      .bulk-input-side {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+      .bulk-upload-label {
+        text-align: center;
+        cursor: pointer;
+      }
+      .bulk-count {
+        font-size: 12px;
+        color: var(--text-secondary);
+        text-align: center;
+      }
+      .bulk-progress {
+        margin-bottom: 20px;
+      }
+      .progress-track {
+        height: 6px;
+        background: var(--hairline);
+        border-radius: 4px;
+        overflow: hidden;
+      }
+      .progress-fill {
+        height: 100%;
+        width: 0%;
+        background: var(--accent);
+        transition: width 0.2s ease;
+      }
+      .progress-label {
+        margin-top: 8px;
+        font-size: 13px;
+        color: var(--text-secondary);
+        font-family: "IBM Plex Mono", monospace;
+      }
+      .bulk-row-status {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 12px;
+        color: var(--text-secondary);
+      }
+      .bulk-row-status.pending::before {
+        content: "";
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: var(--hairline);
+        display: inline-block;
+      }
+      .bulk-row-status.error {
+        color: var(--risk);
+      }
+
+      /* ---------- Docs ---------- */
+      .docs-grid {
+        display: grid;
+        grid-template-columns: 200px 1fr;
+        gap: 40px;
+        align-items: start;
+      }
+      .docs-toc {
+        position: sticky;
+        top: 20px;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        font-size: 13px;
+        border-left: 2px solid var(--hairline);
+        padding-left: 14px;
+      }
+      .docs-toc a {
+        color: var(--text-secondary);
+      }
+      .docs-toc a:hover {
+        color: var(--accent);
+      }
+      .docs-content section {
+        margin-bottom: 44px;
+        scroll-margin-top: 20px;
+      }
+      .docs-content h2 {
+        font-size: 21px;
+        margin-bottom: 14px;
+      }
+      .docs-content p {
+        color: var(--text-secondary);
+        font-size: 15px;
+        line-height: 1.7;
+        margin-bottom: 10px;
+      }
+      .docs-list {
+        list-style: none;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+      .docs-list li {
+        color: var(--text-secondary);
+        font-size: 15px;
+        line-height: 1.6;
+        padding-left: 18px;
+        position: relative;
+      }
+      .docs-list li::before {
+        content: "—";
+        position: absolute;
+        left: 0;
+        color: var(--accent);
+      }
+      .docs-tbl th,
+      .docs-tbl td {
+        font-size: 13px;
+      }
+      .docs-code {
+        background: var(--surface);
+        border: 1px solid var(--hairline);
+        border-radius: 4px;
+        padding: 2px 7px;
+        font-size: 13px;
+      }
+      @media (max-width: 760px) {
+        .docs-grid {
+          grid-template-columns: 1fr;
+        }
+        .docs-toc {
+          position: static;
+          flex-direction: row;
+          flex-wrap: wrap;
+          border-left: none;
+          border-bottom: 2px solid var(--hairline);
+          padding-left: 0;
+          padding-bottom: 14px;
+        }
+        .bulk-input-row {
+          grid-template-columns: 1fr;
+        }
+      }
+
+      /* ---------- Settings ---------- */
+      .settings-grid {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 20px;
+      }
+      @media (max-width: 760px) {
+        .settings-grid {
+          grid-template-columns: 1fr;
+        }
+      }
+      .settings-card {
+        background: var(--surface);
+        border: 1px solid var(--hairline);
+        border-radius: 6px;
+        padding: 24px;
+      }
+      .settings-card h2 {
+        font-size: 17px;
+        margin-bottom: 16px;
+      }
+      .settings-note {
+        color: var(--text-secondary);
+        font-size: 13px;
+        line-height: 1.6;
+        margin-bottom: 16px;
+      }
+      .settings-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+      }
     </style>
     <script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
   </head>
@@ -1327,6 +1521,375 @@
       <div class="error-box" id="network-error"></div>
       <div id="network-legend" class="network-legend"></div>
       <svg id="network-svg" width="100%" height="560"></svg>
+    </div>
+
+    <!-- BULK -->
+    <div data-page="/bulk" class="shell page">
+      <div class="page-head">
+        <div>
+          <h1>Bulk verify</h1>
+          <p class="sub">
+            Paste or upload a list of GSTINs. Each one runs through the same
+            verification and risk agents as a single check, one at a time.
+          </p>
+        </div>
+        <div class="head-actions">
+          <button type="button" class="btn-ghost" id="bulk-sample">
+            Load sample list
+          </button>
+          <button type="button" class="btn-ghost" id="bulk-export" disabled>
+            Export CSV
+          </button>
+        </div>
+      </div>
+
+      <div class="error-box" id="bulk-error"></div>
+
+      <div class="bulk-input-row">
+        <textarea
+          id="bulk-textarea"
+          class="mono bulk-textarea"
+          placeholder="29AAACI4798L1ZU&#10;27AAACH2702H2ZZ&#10;07AAACT2727Q1ZY&#10;&#10;One GSTIN per line, or comma/space separated. Up to 60 at a time."
+        ></textarea>
+        <div class="bulk-input-side">
+          <label for="bulk-file" class="btn-ghost bulk-upload-label">
+            Upload .csv / .txt
+          </label>
+          <input
+            type="file"
+            id="bulk-file"
+            accept=".csv,.txt"
+            style="display: none"
+          />
+          <div class="bulk-count" id="bulk-count">0 GSTINs queued</div>
+          <button type="button" class="btn-primary" id="bulk-run">
+            Run bulk verification
+          </button>
+        </div>
+      </div>
+
+      <div class="bulk-progress" id="bulk-progress" style="display: none">
+        <div class="progress-track">
+          <div class="progress-fill" id="bulk-progress-fill"></div>
+        </div>
+        <div class="progress-label" id="bulk-progress-label"></div>
+      </div>
+
+      <div
+        class="summary-strip"
+        id="bulk-summary"
+        style="display: none"
+      ></div>
+
+      <div id="bulk-body"></div>
+    </div>
+
+    <!-- DOCS -->
+    <div data-page="/docs" class="shell page docs-page">
+      <div class="page-head">
+        <div>
+          <h1>Documentation</h1>
+          <p class="sub">
+            How the registry is built, what it checks, and every endpoint
+            behind it.
+          </p>
+        </div>
+      </div>
+
+      <div class="docs-grid">
+        <nav class="docs-toc">
+          <a href="#docs-overview">Overview</a>
+          <a href="#docs-architecture">Architecture</a>
+          <a href="#docs-agents">Verification &amp; risk agents</a>
+          <a href="#docs-scoring">Trust score &amp; verdicts</a>
+          <a href="#docs-api">API reference</a>
+          <a href="#docs-badges">Public badges</a>
+          <a href="#docs-limits">Data sources &amp; limits</a>
+        </nav>
+
+        <div class="docs-content">
+          <section id="docs-overview">
+            <h2>Overview</h2>
+            <p>
+              The Supplier Verification Registry checks a supplier's GSTIN
+              against live government-sourced data before you pay them, and
+              scores the result instead of leaving you to read a raw API
+              response. Every check is logged to your account so you can look
+              back at what you verified and when, and suppliers that share a
+              bank account or address with another supplier are flagged
+              across your whole list, not just one at a time.
+            </p>
+          </section>
+
+          <section id="docs-architecture">
+            <h2>Architecture</h2>
+            <p>Everything runs serverless, on AWS, in ap-south-1:</p>
+            <ul class="docs-list">
+              <li>
+                <b>Amazon API Gateway</b> — REST API in front of every Lambda
+                function, CORS-enabled for the frontend.
+              </li>
+              <li>
+                <b>AWS Lambda (Python 3.13)</b> — one function per endpoint:
+                auth, verify, reads (suppliers / history / reports / stats /
+                fraud network), badges, demo seed, and the nightly re-check.
+              </li>
+              <li>
+                <b>Amazon Cognito</b> — user pool for signup / login /
+                confirmation; every protected endpoint validates the bearer
+                token against Cognito directly.
+              </li>
+              <li>
+                <b>Amazon DynamoDB</b> — five pay-per-request tables:
+                Suppliers, VerificationLog, Users, Stats, Badges. No idle
+                cost.
+              </li>
+              <li>
+                <b>Amazon Bedrock (Nova Lite)</b> — generates the
+                plain-language summary on each report; falls back to a
+                template if the call fails, so a check never errors out
+                because of the AI step.
+              </li>
+              <li>
+                <b>Amazon EventBridge</b> — nightly schedule that re-verifies
+                every live supplier and revokes badges that fall out of
+                Verified.
+              </li>
+              <li>
+                <b>AWS Amplify Hosting</b> — serves the static frontend
+                (this single-page app) and rebuilds on every push.
+              </li>
+            </ul>
+          </section>
+
+          <section id="docs-agents">
+            <h2>Verification &amp; risk agents</h2>
+            <p>Every check runs two agents in sequence, and their steps are
+              shown live in the trace on the Verify page:</p>
+            <ul class="docs-list">
+              <li>
+                <b>Verification agent</b> — runs an offline GSTIN format and
+                checksum check first (a malformed number never reaches an
+                external API), then looks the GSTIN up against
+                gstincheck.co.in, falling back to data.gov.in's Company
+                Master Data if that source is unavailable.
+              </li>
+              <li>
+                <b>Risk agent</b> — scores the supplier from a 100-point
+                baseline. "Own findings" look at that one supplier
+                (registration status, how recently it registered, declared
+                vs. registered details). "Ring findings" then re-run across
+                every supplier you've verified, so a bank account or address
+                shared with another supplier in your account drops the trust
+                score for everyone in that ring, not just the newest one.
+              </li>
+            </ul>
+          </section>
+
+          <section id="docs-scoring">
+            <h2>Trust score &amp; verdicts</h2>
+            <p>
+              Every supplier starts at 100 and loses points per finding.
+              Findings are shown ordered by severity, worst first:
+            </p>
+            <div class="table-scroll">
+              <table class="tbl docs-tbl">
+                <thead>
+                  <tr>
+                    <th>Verdict</th>
+                    <th>Meaning</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td><span class="verdict v-verified"><i class="dot"></i>Verified</span></td>
+                    <td>No material findings — safe to pay.</td>
+                  </tr>
+                  <tr>
+                    <td><span class="verdict v-review"><i class="dot"></i>Needs review</span></td>
+                    <td>
+                      Minor findings (e.g. very recently registered) — worth
+                      a second look before a large payment.
+                    </td>
+                  </tr>
+                  <tr>
+                    <td><span class="verdict v-risk"><i class="dot"></i>High risk</span></td>
+                    <td>
+                      Material findings, most often a shared bank account or
+                      address with another supplier in your account.
+                    </td>
+                  </tr>
+                  <tr>
+                    <td><span class="verdict v-reject"><i class="dot"></i>Rejected</span></td>
+                    <td>
+                      The GSTIN itself is malformed or fails the checksum —
+                      never even reaches the government API.
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          <section id="docs-api">
+            <h2>API reference</h2>
+            <p>
+              Base URL:
+              <code class="mono docs-code" id="docs-api-base">&nbsp;</code>
+            </p>
+            <div class="table-scroll">
+              <table class="tbl docs-tbl">
+                <thead>
+                  <tr>
+                    <th>Method</th>
+                    <th>Path</th>
+                    <th>Auth</th>
+                    <th>Purpose</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr><td class="mono">POST</td><td class="mono">/auth/signup</td><td>—</td><td>Create an account</td></tr>
+                  <tr><td class="mono">POST</td><td class="mono">/auth/confirm</td><td>—</td><td>Confirm signup with the emailed code</td></tr>
+                  <tr><td class="mono">POST</td><td class="mono">/auth/login</td><td>—</td><td>Log in, returns an access token</td></tr>
+                  <tr><td class="mono">POST</td><td class="mono">/suppliers/verify</td><td>Bearer</td><td>Run a live verification + risk check on one GSTIN</td></tr>
+                  <tr><td class="mono">GET</td><td class="mono">/suppliers</td><td>Bearer</td><td>List this account's suppliers with current verdicts</td></tr>
+                  <tr><td class="mono">GET</td><td class="mono">/history</td><td>Bearer</td><td>List this account's verification runs, newest first</td></tr>
+                  <tr><td class="mono">GET</td><td class="mono">/reports/&#123;log_id&#125;</td><td>Bearer</td><td>Full saved report for one verification run</td></tr>
+                  <tr><td class="mono">GET</td><td class="mono">/fraud-network</td><td>Bearer</td><td>Nodes + edges of suppliers linked by a shared bank account or address</td></tr>
+                  <tr><td class="mono">POST</td><td class="mono">/demo/seed</td><td>Bearer</td><td>Load 5 real companies + hand-crafted fraud cases into this account</td></tr>
+                  <tr><td class="mono">POST</td><td class="mono">/badges</td><td>Bearer</td><td>Issue a public badge for a Verified supplier</td></tr>
+                  <tr><td class="mono">GET</td><td class="mono">/badges/&#123;badge_id&#125;</td><td>—</td><td>Public badge page data</td></tr>
+                  <tr><td class="mono">GET</td><td class="mono">/stats</td><td>—</td><td>Global, anonymous count of verifications run</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          <section id="docs-badges">
+            <h2>Public badges</h2>
+            <p>
+              A Verified supplier can be issued a public badge — a stable,
+              shareable link at <code class="mono docs-code">/#/badge/&lt;id&gt;</code>
+              that anyone can open without an account. Badges are kept honest
+              automatically: the nightly re-check refreshes the score on
+              every badge, and the moment a supplier's verdict drops below
+              Verified, its badge is deleted and the link stops resolving.
+            </p>
+          </section>
+
+          <section id="docs-limits">
+            <h2>Data sources &amp; limits</h2>
+            <ul class="docs-list">
+              <li>
+                Primary lookup: <b>gstincheck.co.in</b>, falling back to
+                <b>data.gov.in</b>'s Company Master Data API.
+              </li>
+              <li>
+                The nightly re-check processes suppliers oldest-checked-first
+                in bounded batches, so a large account rotates through
+                everyone over a few nights rather than timing out in one run.
+              </li>
+              <li>
+                Bulk verification (this app's /bulk page) calls the same
+                verify endpoint once per GSTIN, sequentially, capped at 60
+                per run to stay polite to the upstream government APIs.
+              </li>
+              <li>
+                If the AI summary call fails for any reason, a
+                template-based summary is shown instead — a check never
+                fails because of the AI step.
+              </li>
+            </ul>
+          </section>
+        </div>
+      </div>
+    </div>
+
+    <!-- SETTINGS -->
+    <div data-page="/settings" class="shell page">
+      <div class="page-head">
+        <div>
+          <h1>Settings</h1>
+          <p class="sub">Your account, your data, and this deployment.</p>
+        </div>
+      </div>
+
+      <div class="error-box" id="settings-error"></div>
+      <div class="msg success" id="settings-success" style="display: none"></div>
+
+      <div class="settings-grid">
+        <section class="settings-card">
+          <h2>Account</h2>
+          <div class="detail-row">
+            <div class="k">Email</div>
+            <div class="v mono" id="settings-email">—</div>
+          </div>
+          <div class="detail-row">
+            <div class="k">Authentication</div>
+            <div class="v">Amazon Cognito user pool</div>
+          </div>
+          <button type="button" class="btn-ghost" id="settings-logout">
+            Log out
+          </button>
+        </section>
+
+        <section class="settings-card">
+          <h2>Export your data</h2>
+          <p class="settings-note">
+            Downloads everything currently in your account, straight from the
+            same endpoints the Dashboard and History pages use.
+          </p>
+          <div class="settings-actions">
+            <button type="button" class="btn-ghost" id="settings-export-suppliers">
+              Export suppliers (CSV)
+            </button>
+            <button type="button" class="btn-ghost" id="settings-export-history">
+              Export history (CSV)
+            </button>
+            <button type="button" class="btn-ghost" id="settings-export-json">
+              Export everything (JSON)
+            </button>
+          </div>
+        </section>
+
+        <section class="settings-card">
+          <h2>Demo &amp; testing</h2>
+          <p class="settings-note">
+            Loads 5 real companies (cached live GST data) plus hand-crafted
+            fraud cases into your account. Safe to run more than once — it
+            upserts, it doesn't duplicate.
+          </p>
+          <div class="settings-actions">
+            <button type="button" class="btn-ghost" data-action="seed" id="settings-seed">
+              Load demo data
+            </button>
+            <a href="#/bulk" class="btn-ghost">Bulk verify a list &rarr;</a>
+          </div>
+        </section>
+
+        <section class="settings-card">
+          <h2>About this deployment</h2>
+          <div class="detail-row">
+            <div class="k">Region</div>
+            <div class="v mono">ap-south-1 (Mumbai)</div>
+          </div>
+          <div class="detail-row">
+            <div class="k">API base</div>
+            <div class="v mono" style="word-break: break-all" id="settings-api-base">—</div>
+          </div>
+          <div class="detail-row">
+            <div class="k">Cost per verification</div>
+            <div class="v">&lt; ₹0.01 (Lambda + DynamoDB + Bedrock)</div>
+          </div>
+          <div class="detail-row">
+            <div class="k">Nightly re-check</div>
+            <div class="v">EventBridge, 02:00 IST</div>
+          </div>
+          <a href="#/docs" class="btn-ghost" style="margin-top: 12px; display: inline-block;">
+            Read the full docs &rarr;
+          </a>
+        </section>
+      </div>
     </div>
 
     <!-- REPORT (/verify/<id>) -->
@@ -1553,6 +2116,25 @@
         $(id).classList.remove("active");
       }
 
+      // ---------- Shared: CSV / file download ----------
+      const csvSafe = (v) => {
+        let t = String(v ?? "");
+        if (/^[=+\-@]/.test(t)) t = "'" + t; // neutralise spreadsheet formula injection
+        return `"${t.replace(/"/g, '""')}"`;
+      };
+      function toCsv(headers, rows) {
+        return [headers.join(",")]
+          .concat(rows.map((r) => r.map(csvSafe).join(",")))
+          .join("\n");
+      }
+      function downloadFile(filename, content, type = "text/csv") {
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(new Blob([content], { type }));
+        a.download = filename;
+        a.click();
+        URL.revokeObjectURL(a.href);
+      }
+
       // ---------- Router ----------
       const PROTECTED = new Set([
         "/verify",
@@ -1560,6 +2142,8 @@
         "/history",
         "/report",
         "/fraud-network",
+        "/bulk",
+        "/settings",
       ]);
       const KNOWN = new Set([
         "/",
@@ -1572,6 +2156,9 @@
         "/verify-gate",
         "/fraud-network",
         "/badge",
+        "/bulk",
+        "/docs",
+        "/settings",
       ]);
 
       function currentPath() {
@@ -1595,13 +2182,16 @@
 
       function renderNav(page) {
         const nav = $("navlinks");
+        const a = (p) => (page === p ? "active" : "");
         if (session.isLoggedIn) {
-          const a = (p) => (page === p ? "active" : "");
           nav.innerHTML = `
         <a href="#/dashboard" class="${a("/dashboard")}">Dashboard</a>
         <a href="#/verify" class="${a("/verify")}">Verify</a>
+        <a href="#/bulk" class="${a("/bulk")}">Bulk</a>
         <a href="#/history" class="${a("/history")}">History</a>
         <a href="#/fraud-network" class="${a("/fraud-network")}">Network</a>
+        <a href="#/docs" class="${a("/docs")}">Docs</a>
+        <a href="#/settings" class="${a("/settings")}">Settings</a>
         <div class="user-chip">
           <span class="mono" style="color: var(--text-secondary);">${esc(session.email)}</span>
           <button id="logout-btn">Log out</button>
@@ -1613,6 +2203,7 @@
           });
         } else {
           nav.innerHTML = `
+        <a href="#/docs" class="${a("/docs")}">Docs</a>
         <a href="#/login">Log in</a>
         <a href="#/signup" class="cta-nav">Sign up</a>`;
         }
@@ -1625,6 +2216,9 @@
         "/report": (params) => loadReport(params.id),
         "/fraud-network": () => loadFraudNetwork(),
         "/badge": (params) => loadBadge(params.id),
+        "/bulk": () => initBulk(),
+        "/docs": () => initDocs(),
+        "/settings": () => loadSettings(),
       };
 
       function render() {
@@ -2035,43 +2629,19 @@
       $("history-filter").addEventListener("input", renderHistory);
 
       $("history-export").addEventListener("click", () => {
-        const safe = (v) => {
-          let t = String(v ?? "");
-          if (/^[=+\-@]/.test(t)) t = "'" + t; // neutralise spreadsheet formula injection
-          return `"${t.replace(/"/g, '""')}"`;
-        };
-        const lines = [
-          [
-            "time",
-            "gstin",
-            "name",
-            "verdict",
-            "trust_score",
-            "source",
-            "data_origin",
-          ].join(","),
-        ].concat(
-          filteredHistory().map((r) =>
-            [
-              new Date(r.timestamp * 1000).toISOString(),
-              r.gstin,
-              r.name,
-              r.verdict,
-              r.trust_score,
-              r.source,
-              r.data_origin,
-            ]
-              .map(safe)
-              .join(","),
-          ),
+        const csv = toCsv(
+          ["time", "gstin", "name", "verdict", "trust_score", "source", "data_origin"],
+          filteredHistory().map((r) => [
+            new Date(r.timestamp * 1000).toISOString(),
+            r.gstin,
+            r.name,
+            r.verdict,
+            r.trust_score,
+            r.source,
+            r.data_origin,
+          ]),
         );
-        const a = document.createElement("a");
-        a.href = URL.createObjectURL(
-          new Blob([lines.join("\n")], { type: "text/csv" }),
-        );
-        a.download = "verification-history.csv";
-        a.click();
-        URL.revokeObjectURL(a.href);
+        downloadFile("verification-history.csv", csv);
       });
 
       // ---------- Report page ----------
@@ -2376,6 +2946,325 @@
           submitBtn.textContent = "Verify";
         }
       });
+
+      // ---------- Bulk verify ----------
+      const BULK_MAX = 60;
+      const BULK_SAMPLE = [
+        "29AAACI4798L1ZU", // real, verified
+        "27AAACH2702H2ZZ", // real
+        "07AAACT2727Q1ZY", // real
+        "06AAFCS1234D1ZV", // crafted fraud case (shell company)
+        "29AAAPL1234C1ZA", // crafted fraud case (shared bank/address)
+        "27AAPFU0939F1ZX", // tampered checksum - offline REJECT
+      ];
+
+      let bulkResults = []; // [{gstin, status: 'pending'|'done'|'error', name, verdict, trust_score, log_id, message}]
+      let bulkRunning = false;
+      let bulkInitialized = false;
+
+      function parseBulkInput(text) {
+        const tokens = text
+          .split(/[\s,;]+/)
+          .map((t) => t.trim().toUpperCase())
+          .filter(Boolean);
+        const seen = new Set();
+        const clean = [];
+        let skipped = 0;
+        for (const t of tokens) {
+          if (t.length !== 15) {
+            skipped++;
+            continue;
+          }
+          if (seen.has(t)) continue;
+          seen.add(t);
+          clean.push(t);
+        }
+        return { clean, skipped };
+      }
+
+      function updateBulkCount() {
+        const { clean, skipped } = parseBulkInput($("bulk-textarea").value);
+        const over = clean.length > BULK_MAX;
+        const shown = over ? BULK_MAX : clean.length;
+        $("bulk-count").textContent =
+          `${shown} GSTIN${shown === 1 ? "" : "s"} queued` +
+          (over ? ` (first ${BULK_MAX} of ${clean.length})` : "") +
+          (skipped ? ` · ${skipped} skipped (not 15 characters)` : "");
+      }
+
+      function renderBulkTable() {
+        const body = $("bulk-body");
+        if (!bulkResults.length) {
+          body.innerHTML = "";
+          return;
+        }
+        body.innerHTML = `<div class="table-scroll"><table class="tbl">
+      <thead><tr><th>GSTIN</th><th>Supplier</th><th>Verdict</th><th>Trust score</th><th>Status</th></tr></thead>
+      <tbody>${bulkResults
+        .map((r) => {
+          const nameCell = r.name
+            ? `<div class="cell-name">${esc(r.name)}</div>`
+            : `<div class="cell-name muted">—</div>`;
+          const verdictCell =
+            r.status === "done"
+              ? verdictHtml(r.verdict)
+              : r.status === "error"
+                ? `<span class="verdict v-none"><i class="dot"></i>Failed</span>`
+                : `<span class="verdict v-none"><i class="dot"></i>Waiting</span>`;
+          const scoreCell =
+            r.status === "done" && r.trust_score !== undefined && r.trust_score !== null
+              ? esc(r.trust_score)
+              : "—";
+          const statusCell =
+            r.status === "pending"
+              ? `<span class="bulk-row-status pending">queued</span>`
+              : r.status === "running"
+                ? `<span class="bulk-row-status">checking…</span>`
+                : r.status === "error"
+                  ? `<span class="bulk-row-status error">${esc(r.message || "error")}</span>`
+                  : `<span class="bulk-row-status">done</span>`;
+          const rowAttrs =
+            r.status === "done" && r.log_id
+              ? ` class="row-link" data-log="${esc(r.log_id)}"`
+              : "";
+          return `<tr${rowAttrs}>
+            <td class="mono">${esc(r.gstin)}</td>
+            <td>${nameCell}</td>
+            <td>${verdictCell}</td>
+            <td class="num-cell">${scoreCell}</td>
+            <td>${statusCell}</td>
+          </tr>`;
+        })
+        .join("")}</tbody></table></div>`;
+      }
+
+      function renderBulkSummary() {
+        const done = bulkResults.filter((r) => r.status === "done");
+        const summary = $("bulk-summary");
+        if (!done.length) {
+          summary.style.display = "none";
+          return;
+        }
+        const by = {};
+        done.forEach((r) => (by[r.verdict] = (by[r.verdict] || 0) + 1));
+        const errors = bulkResults.filter((r) => r.status === "error").length;
+        summary.innerHTML = `
+      <div class="proof-item"><div class="num mono">${bulkResults.length}</div><div class="label">submitted</div></div>
+      <div class="proof-item"><div class="num mono v-verified">${by.VERIFIED || 0}</div><div class="label">verified</div></div>
+      <div class="proof-item"><div class="num mono v-review">${by.REVIEW || 0}</div><div class="label">need review</div></div>
+      <div class="proof-item"><div class="num mono v-risk">${(by.RISK || 0) + (by.REJECT || 0)}</div><div class="label">high risk</div></div>
+      ${errors ? `<div class="proof-item"><div class="num mono" style="color:var(--risk)">${errors}</div><div class="label">failed to check</div></div>` : ""}`;
+        summary.style.display = "flex";
+      }
+
+      async function runBulk() {
+        if (bulkRunning) return;
+        clearError("bulk-error");
+        const { clean, skipped } = parseBulkInput($("bulk-textarea").value);
+        if (!clean.length) {
+          showError("bulk-error", "Paste or upload at least one 15-character GSTIN.");
+          return;
+        }
+        const list = clean.slice(0, BULK_MAX);
+        bulkResults = list.map((gstin) => ({ gstin, status: "pending" }));
+        renderBulkTable();
+        $("bulk-summary").style.display = "none";
+        $("bulk-export").disabled = true;
+
+        bulkRunning = true;
+        const runBtn = $("bulk-run");
+        runBtn.disabled = true;
+        runBtn.textContent = "Running…";
+        $("bulk-progress").style.display = "block";
+
+        const progFill = $("bulk-progress-fill");
+        const progLabel = $("bulk-progress-label");
+
+        for (let i = 0; i < list.length; i++) {
+          bulkResults[i].status = "running";
+          renderBulkTable();
+          progFill.style.width = `${Math.round((i / list.length) * 100)}%`;
+          progLabel.textContent = `Verifying ${i + 1} / ${list.length} — ${list[i]}`;
+
+          try {
+            const out = await api("/suppliers/verify", { method: "POST", body: { gstin: list[i] } });
+            const a = out.assessment || {};
+            const lookup = (out.data && out.data.gstin_lookup) || {};
+            bulkResults[i] = {
+              gstin: list[i],
+              status: "done",
+              name: lookup.legal_name && lookup.legal_name !== "UNKNOWN" ? lookup.legal_name : "",
+              verdict: a.verdict,
+              trust_score: a.trust_score,
+              log_id: out.log_id,
+            };
+          } catch (e) {
+            bulkResults[i] = { gstin: list[i], status: "error", message: e.message || "request failed" };
+          }
+          renderBulkTable();
+          renderBulkSummary();
+          if (i < list.length - 1) await sleep(250); // be polite to the upstream GST APIs
+        }
+
+        progFill.style.width = "100%";
+        progLabel.textContent = `Done — ${list.length} GSTIN${list.length === 1 ? "" : "s"} checked${skipped ? ` (${skipped} skipped, not 15 characters)` : ""}.`;
+        bulkRunning = false;
+        runBtn.disabled = false;
+        runBtn.textContent = "Run bulk verification";
+        $("bulk-export").disabled = !bulkResults.some((r) => r.status === "done");
+      }
+
+      function initBulk() {
+        if (bulkInitialized) return;
+        bulkInitialized = true;
+
+        $("bulk-textarea").addEventListener("input", updateBulkCount);
+        updateBulkCount();
+
+        $("bulk-sample").addEventListener("click", () => {
+          $("bulk-textarea").value = BULK_SAMPLE.join("\n");
+          updateBulkCount();
+        });
+
+        $("bulk-file").addEventListener("change", async (e) => {
+          const file = e.target.files[0];
+          if (!file) return;
+          const text = await file.text();
+          const ta = $("bulk-textarea");
+          ta.value = ta.value.trim() ? ta.value.trim() + "\n" + text : text;
+          updateBulkCount();
+          e.target.value = "";
+        });
+
+        $("bulk-run").addEventListener("click", runBulk);
+
+        $("bulk-export").addEventListener("click", () => {
+          const csv = toCsv(
+            ["gstin", "name", "verdict", "trust_score", "status"],
+            bulkResults.map((r) => [
+              r.gstin,
+              r.name || "",
+              r.verdict || "",
+              r.trust_score ?? "",
+              r.status === "error" ? "error: " + (r.message || "") : r.status,
+            ]),
+          );
+          downloadFile("bulk-verification.csv", csv);
+        });
+
+        document.addEventListener("click", (e) => {
+          const row = e.target.closest("#bulk-body tr.row-link");
+          if (row && row.dataset.log) navigate(`/verify/${row.dataset.log}`);
+        });
+      }
+
+      // ---------- Docs ----------
+      let docsInitialized = false;
+      function initDocs() {
+        $("docs-api-base").textContent = API_BASE;
+        if (docsInitialized) return;
+        docsInitialized = true;
+      }
+
+      // ---------- Settings ----------
+      async function loadSettings() {
+        clearError("settings-error");
+        $("settings-success").style.display = "none";
+        $("settings-email").textContent = session.email || "—";
+        $("settings-api-base").textContent = API_BASE;
+      }
+
+      function initSettingsOnce() {
+        $("settings-logout").addEventListener("click", () => {
+          session.clear();
+          navigate("/login");
+          render();
+        });
+
+        $("settings-export-suppliers").addEventListener("click", async (e) => {
+          const btn = e.currentTarget;
+          const label = btn.textContent;
+          btn.disabled = true;
+          btn.textContent = "Exporting…";
+          try {
+            const res = await api("/suppliers");
+            const rows = res.data || [];
+            const csv = toCsv(
+              ["gstin", "name", "verdict", "trust_score", "registration_status", "data_origin", "last_verified_at"],
+              rows.map((s) => [
+                s.gstin,
+                s.name || s.legal_name || "",
+                s.verdict || "",
+                s.trust_score ?? "",
+                s.registration_status || "",
+                s.data_origin || "",
+                s.last_verified_at ? new Date(s.last_verified_at * 1000).toISOString() : "",
+              ]),
+            );
+            downloadFile("suppliers.csv", csv);
+          } catch (err) {
+            showError("settings-error", err.message);
+          } finally {
+            btn.disabled = false;
+            btn.textContent = label;
+          }
+        });
+
+        $("settings-export-history").addEventListener("click", async (e) => {
+          const btn = e.currentTarget;
+          const label = btn.textContent;
+          btn.disabled = true;
+          btn.textContent = "Exporting…";
+          try {
+            const res = await api("/history?limit=1000");
+            const rows = res.data || [];
+            const csv = toCsv(
+              ["time", "gstin", "name", "verdict", "trust_score", "source", "data_origin"],
+              rows.map((r) => [
+                r.timestamp ? new Date(r.timestamp * 1000).toISOString() : "",
+                r.gstin,
+                r.name || "",
+                r.verdict || "",
+                r.trust_score ?? "",
+                r.source || "",
+                r.data_origin || "",
+              ]),
+            );
+            downloadFile("verification-history.csv", csv);
+          } catch (err) {
+            showError("settings-error", err.message);
+          } finally {
+            btn.disabled = false;
+            btn.textContent = label;
+          }
+        });
+
+        $("settings-export-json").addEventListener("click", async (e) => {
+          const btn = e.currentTarget;
+          const label = btn.textContent;
+          btn.disabled = true;
+          btn.textContent = "Exporting…";
+          try {
+            const [suppliers, history] = await Promise.all([
+              api("/suppliers"),
+              api("/history?limit=1000"),
+            ]);
+            const payload = {
+              exported_at: new Date().toISOString(),
+              account: session.email,
+              suppliers: suppliers.data || [],
+              history: history.data || [],
+            };
+            downloadFile("supplier-registry-export.json", JSON.stringify(payload, null, 2), "application/json");
+          } catch (err) {
+            showError("settings-error", err.message);
+          } finally {
+            btn.disabled = false;
+            btn.textContent = label;
+          }
+        });
+      }
+      initSettingsOnce();
 
       // ---------- Init ----------
       render();
