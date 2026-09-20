@@ -33,4 +33,6 @@ def handler(event, context):
         "error": row.get("error", ""),
         "timestamp": int(row.get("timestamp", 0)),
         "result": json.loads(row.get("raw_result") or "{}"),
+        "summary": row.get("summary", ""), 
+        "summary_source": row.get("summary_source", ""),
     })
