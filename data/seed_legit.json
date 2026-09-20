@@ -267,10 +267,7 @@
             "dty": "Regular",
             "cxdt": "",
             "gstin": "27AAACH2702H2ZZ",
-            "nba": [
-              "Wholesale Business",
-              "Others"
-            ],
+            "nba": ["Wholesale Business", "Others"],
             "ekycVFlag": "Not Applicable",
             "cmpRt": "NA",
             "rgdt": "01/08/2017",

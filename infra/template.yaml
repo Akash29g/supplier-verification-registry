@@ -1,4 +1,4 @@
-AWSTemplateFormatVersion: '2010-09-09'
+AWSTemplateFormatVersion: "2010-09-09"
 Transform: AWS::Serverless-2016-10-31
 Description: Supplier Verification Registry — DynamoDB + Cognito
 
@@ -171,7 +171,7 @@ Resources:
           Properties:
             Path: /auth/login
             Method: post
-  
+
   VerifySupplierFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -190,6 +190,13 @@ Resources:
             TableName: !Ref VerificationLogTable
         - DynamoDBCrudPolicy:
             TableName: !Ref StatsTable
+        - Statement:
+          - Effect: Allow
+            Action: [bedrock:InvokeModel]
+            Resource:
+              - !Sub "arn:aws:bedrock:${AWS::Region}::foundation-model/amazon.nova-lite-v1:0"
+              - !Sub "arn:aws:bedrock:us-east-1::foundation-model/amazon.nova-lite-v1:0"
+              - !Sub "arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/apac.amazon.nova-lite-v1:0"
       Events:
         Api:
           Type: Api
@@ -295,6 +302,25 @@ Resources:
             Path: /demo/seed
             Method: post
 
+  GetFraudNetworkFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../
+      Handler: lambda.get_fraud_network.handler
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: [cognito-idp:GetUser]
+              Resource: !GetAtt UserPool.Arn
+        - DynamoDBReadPolicy:
+            TableName: !Ref SuppliersTable
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            Path: /fraud-network
+            Method: get
+
 Outputs:
   SuppliersTableName:
     Value: !Ref SuppliersTable
@@ -310,4 +336,4 @@ Outputs:
     Value: !Ref UserPoolClient
   ApiUrl:
     Description: Base URL for the API
-    Value: !Sub "https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/Prod"
+    Value: !Sub "https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/Prod"

@@ -7,6 +7,7 @@ from botocore.exceptions import ClientError
 from agents.verification_agent import verify_gstin
 from agents import risk_agent
 from agents.trace import step, now
+from agents import summary_agent
 
 from . import common, store
 
@@ -100,6 +101,10 @@ def handler(event, context):
                  f"Verdict: {assessment['verdict']} (trust score {assessment['trust_score']}/100)",
                  ok=False)
 
+        name_for_summary = legal_name or declared.get("name", "") or gstin
+        summary_text, summary_source = summary_agent.summarize(
+        name_for_summary, assessment["verdict"], assessment["trust_score"], assessment["findings"], trace=trace)    
+
         store.log_table().put_item(Item={
             "owner_user_id": user_id,
             "log_id": log_id,
@@ -115,6 +120,8 @@ def handler(event, context):
             "error": result_dict.get("error") or "",
             "timestamp": now_ts,
             "raw_result": json.dumps(result_dict),
+            "summary": summary_text, 
+            "summary_source": summary_source,
         })
 
         store.bump_verification_counter()
@@ -123,6 +130,8 @@ def handler(event, context):
         out["log_id"] = log_id
         out["assessment"] = assessment
         out["trace"] = trace
+        out["summary"] = summary_text; 
+        out["summary_source"] = summary_source
         return common.response(200, out)
 
     except ClientError as e:
