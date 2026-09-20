@@ -37,6 +37,7 @@ DATA_GOV_IN_MCA_RESOURCE_ID = os.environ.get(
 )
 
 REQUEST_TIMEOUT_SECONDS = 6
+DATA_GOV_TIMEOUT_SECONDS = 3  # enrichment only - never let it dominate the response time
 
 # bug: original assumption was that this API supported filters[pan] for a
 # direct single-company lookup. Confirmed against the live API's parameter
@@ -205,7 +206,7 @@ def _call_data_gov_in(state_code, legal_name_hint, api_key):
                 "filters[CompanyStateCode]": state_name,
                 "limit": 200,  # capped batch, not exhaustive - enrichment only
             },
-            timeout=REQUEST_TIMEOUT_SECONDS,
+            timeout=DATA_GOV_TIMEOUT_SECONDS,
         )
         if response.status_code != 200:
             return None
@@ -296,11 +297,12 @@ def verify_gstin(raw_gstin, trace=None):
         step(trace, "verification",
              "data.gov.in Company Master Data cross-reference: "
              + ("matched a company record" if company_record
-                else "no match (best-effort, name-based)"),
-             ok=bool(company_record), started=t3)
+                else "no match (optional cross-check, name-based)"),
+             ok=bool(company_record), started=t3, neutral=not company_record)
     else:
         step(trace, "verification",
-             "data.gov.in cross-reference skipped (no API key configured)", ok=False)
+             "data.gov.in cross-reference skipped (no API key configured)",
+             ok=False, neutral=True)
 
     status = "ok" if (gstin_lookup and company_record) else "degraded"
 
@@ -322,4 +324,4 @@ if __name__ == "__main__":
     import sys
     test_gstin = sys.argv[1] if len(sys.argv) > 1 else "27AAPFU0939F1ZV"
     result = verify_gstin(test_gstin)
-    print(result.to_dict())
+    print(result.to_dict())

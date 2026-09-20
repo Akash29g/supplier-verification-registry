@@ -14,13 +14,20 @@ def now():
     return time.time()
 
 
-def step(trace, agent, message, ok=True, started=None):
-    """Append one step. `trace=None` is allowed so callers can skip tracing."""
+def step(trace, agent, message, ok=True, started=None, neutral=False):
+    """Append one step. `trace=None` is allowed so callers can skip tracing.
+
+    neutral=True marks an informational step (e.g. an optional cross-check that
+    found nothing) so the UI shows a grey dash instead of a red cross.
+    """
     if trace is None:
         return
-    trace.append({
+    entry = {
         "agent": agent,
         "message": message,
         "ok": bool(ok),
         "ms": int((time.time() - started) * 1000) if started else None,
-    })
+    }
+    if neutral:
+        entry["neutral"] = True
+    trace.append(entry)
