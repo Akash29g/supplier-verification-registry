@@ -53,5 +53,6 @@ def summarize(name, verdict, trust_score, findings, trace=None):
         step(trace, "summary", "Bedrock (Nova Lite) summary generated", ok=True, started=started)
         return text, "bedrock"
     except (ClientError, Exception) as e:
+        print(f"summary_agent bedrock call failed: {type(e).__name__}: {e}")
         step(trace, "summary", f"Bedrock unavailable ({type(e).__name__}), used template fallback", ok=False, started=started)
         return _fallback(name, verdict, trust_score, findings), "fallback"
