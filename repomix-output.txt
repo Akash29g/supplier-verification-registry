@@ -1,0 +1,5150 @@
+This file is a merged representation of the entire codebase, combined into a single document by Repomix.
+
+<file_summary>
+This section contains a summary of this file.
+
+<purpose>
+This file contains a packed representation of the entire repository's contents.
+It is designed to be easily consumable by AI systems for analysis, code review,
+or other automated processes.
+</purpose>
+
+<file_format>
+The content is organized as follows:
+1. This summary section
+2. Repository information
+3. Directory structure
+4. Repository files (if enabled)
+5. Multiple file entries, each consisting of:
+  - File path as an attribute
+  - Full contents of the file
+</file_format>
+
+<usage_guidelines>
+- This file should be treated as read-only. Any changes should be made to the
+  original repository files, not this packed version.
+- When processing this file, use the file path to distinguish
+  between different files in the repository.
+- Be aware that this file may contain sensitive information. Handle it with
+  the same level of security as you would the original repository.
+</usage_guidelines>
+
+<notes>
+- Some files may have been excluded based on .gitignore rules and Repomix's configuration
+- Binary files are not included in this packed representation. Please refer to the Repository Structure section for a complete list of file paths, including binary files
+- Files matching patterns in .gitignore are excluded
+- Files matching default ignore patterns are excluded
+- Files are sorted by Git change count (files with more changes are at the bottom)
+</notes>
+
+</file_summary>
+
+<directory_structure>
+agents/
+  .gitkeep
+  gstin_utils.py
+  risk_agent.py
+  strands_wrapper.py
+  summary_agent.py
+  trace.py
+  verification_agent.py
+data/
+  .gitkeep
+  fetch_seed_legit.py
+  seed_fraud.json
+  seed_legit.json
+docs/
+  .gitkeep
+frontend/
+  components/
+    .gitkeep
+  pages/
+    .gitkeep
+  styles/
+    .gitkeep
+  index.html
+infra/
+  .gitkeep
+  template.yaml
+lambda/
+  __init__.py
+  .gitkeep
+  auth_confirm.py
+  auth_login.py
+  auth_signup.py
+  common.py
+  demo_seed.py
+  get_fraud_network.py
+  get_history.py
+  get_report.py
+  get_stats.py
+  get_suppliers.py
+  store.py
+  verify_supplier.py
+tests/
+  .gitkeep
+  test_gstin_utils.py
+  test_handlers.py
+  test_risk_agent.py
+.env.example
+.gitignore
+amplify.yml
+README.md
+requirements-dev.txt
+requirements.txt
+</directory_structure>
+
+<files>
+This section contains the contents of the repository's files.
+
+<file path="agents/summary_agent.py">
+"""
+Turns risk_agent's findings into a short plain-English paragraph via Bedrock.
+Never blocks the pipeline: any failure falls back to a deterministic template.
+"""
+import json
+import os
+
+import boto3
+from botocore.exceptions import ClientError
+
+from agents.trace import step, now
+
+BEDROCK_MODEL_ID = os.environ.get("BEDROCK_MODEL_ID", "apac.amazon.nova-lite-v1:0")
+BEDROCK_REGION = os.environ.get("BEDROCK_REGION", os.environ.get("AWS_REGION", "ap-south-1"))
+
+_client = None
+
+
+def _bedrock():
+    global _client
+    if _client is None:
+        _client = boto3.client("bedrock-runtime", region_name=BEDROCK_REGION)
+    return _client
+
+
+def _fallback(name, verdict, trust_score, findings):
+    if not findings:
+        return f"{name or 'This supplier'} has no notable findings. Verdict: {verdict} ({trust_score}/100)."
+    order = {"reject": 0, "risk": 1, "review": 2, "info": 3}
+    top = sorted(findings, key=lambda f: order[f["severity"]])[:3]
+    return f"{name or 'This supplier'} is rated {verdict} ({trust_score}/100). Key findings: " + "; ".join(f["message"] for f in top)
+
+
+def summarize(name, verdict, trust_score, findings, trace=None):
+    started = now()
+    prompt = (
+        "You are a supplier-risk analyst. In 2-3 plain-English sentences, summarise this "
+        "assessment for someone deciding whether to pay this supplier.\n\n"
+        f"Supplier: {name or 'unknown'}\nVerdict: {verdict}\nTrust score: {trust_score}/100\nFindings:\n"
+        + "\n".join(f"- ({f['severity']}) {f['message']}" for f in findings)
+        + "\n\nDo not invent facts beyond what's listed. Be direct."
+    )
+    try:
+        resp = _bedrock().invoke_model(
+            modelId=BEDROCK_MODEL_ID,
+            body=json.dumps({
+                "messages": [{"role": "user", "content": [{"text": prompt}]}],
+                "inferenceConfig": {"maxTokens": 220, "temperature": 0.3},
+            }),
+        )
+        payload = json.loads(resp["body"].read())
+        text = payload["output"]["message"]["content"][0]["text"].strip()
+        step(trace, "summary", "Bedrock (Nova Lite) summary generated", ok=True, started=started)
+        return text, "bedrock"
+    except (ClientError, Exception) as e:
+        step(trace, "summary", f"Bedrock unavailable ({type(e).__name__}), used template fallback", ok=False, started=started)
+        return _fallback(name, verdict, trust_score, findings), "fallback"
+</file>
+
+<file path="lambda/get_fraud_network.py">
+from agents import risk_agent
+from . import common, store
+
+
+def handler(event, context):
+    user_id = common.get_user_id(event)
+    if not user_id:
+        return common.fail(401, "missing_or_invalid_token")
+
+    rows = store.query_all(store.suppliers_table(), user_id)
+
+    nodes = [{
+        "id": r["gstin"],
+        "name": r.get("legal_name") or r.get("name") or r["gstin"],
+        "verdict": r.get("verdict", ""),
+        "trust_score": int(r["trust_score"]) if r.get("trust_score") is not None else None,
+        "data_origin": r.get("data_origin", "live_api"),
+    } for r in rows]
+
+    edges = []
+    for i, a in enumerate(rows):
+        for b in rows[i + 1:]:
+            reasons = []
+            ab, bb = risk_agent.norm_bank(a.get("bank_account")), risk_agent.norm_bank(b.get("bank_account"))
+            if ab and ab == bb:
+                reasons.append("shared_bank_account")
+            aa, ba = risk_agent.norm_address(a.get("address")), risk_agent.norm_address(b.get("address"))
+            if aa and aa == ba:
+                reasons.append("shared_address")
+            if reasons:
+                edges.append({"source": a["gstin"], "target": b["gstin"], "reasons": reasons})
+
+    return common.ok({"nodes": nodes, "edges": edges}, {"node_count": len(nodes), "edge_count": len(edges)})
+</file>
+
+<file path="agents/.gitkeep">
+
+</file>
+
+<file path="agents/gstin_utils.py">
+"""
+GSTIN validation utilities.
+
+GSTIN structure (15 characters):
+  [0:2]   State code (2 digits)
+  [2:12]  PAN (10 chars: 5 letters, 4 digits, 1 letter)
+  [12]    Entity number for this PAN in this state (1-9 or A-Z)
+  [13]    Fixed 'Z'
+  [14]    Checksum character (Luhn mod-36 over the first 14 chars)
+
+No network calls in this module - pure offline validation. This is the
+foundation everything else (verification_agent, risk scoring) sits on top of,
+so it needs to be correct and fast before any real API is wired in.
+"""
+
+import re
+
+CODE_POINT_CHARS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+
+GSTIN_FORMAT_RE = re.compile(
+    r"^([0-9]{2})([A-Z]{5}[0-9]{4}[A-Z])([1-9A-Z])(Z)([0-9A-Z])$"
+)
+
+
+class GstinValidationResult:
+    """Structured result so callers don't have to parse a bool + string."""
+
+    def __init__(self, is_valid, reason, state_code=None, pan=None):
+        self.is_valid = is_valid
+        self.reason = reason
+        self.state_code = state_code
+        self.pan = pan
+
+    def to_dict(self):
+        return {
+            "is_valid": self.is_valid,
+            "reason": self.reason,
+            "state_code": self.state_code,
+            "pan": self.pan,
+        }
+
+    def __repr__(self):
+        return f"GstinValidationResult(is_valid={self.is_valid}, reason={self.reason!r})"
+
+
+def calculate_checksum(gstin_first_14):
+    """
+    Luhn mod-36 checksum used by GSTN.
+
+    Walk the first 14 characters right-to-left, alternating a multiplication
+    factor of 2 and 1, folding each product back into base-36 (divmod by 36
+    and adding quotient + remainder), summing everything, then taking the
+    36's-complement of the total mod 36 as the check character's index.
+    """
+    factor = 2
+    total = 0
+    n = len(CODE_POINT_CHARS)
+
+    for char in reversed(gstin_first_14):
+        code_point = CODE_POINT_CHARS.index(char)
+        product = factor * code_point
+        total += (product // n) + (product % n)
+        factor = 1 if factor == 2 else 2
+
+    remainder = total % n
+    check_code_point = (n - remainder) % n
+    return CODE_POINT_CHARS[check_code_point]
+
+
+def validate_gstin(raw_gstin):
+    """
+    Full validation: format shape, allowed characters, and checksum.
+    Returns a GstinValidationResult - never raises on bad input, since this
+    sits directly in front of user-entered / bulk-uploaded data.
+    """
+    if not raw_gstin or not isinstance(raw_gstin, str):
+        return GstinValidationResult(False, "empty_or_not_a_string")
+
+    gstin = raw_gstin.strip().upper()
+
+    if len(gstin) != 15:
+        return GstinValidationResult(False, f"wrong_length:{len(gstin)}")
+
+    match = GSTIN_FORMAT_RE.match(gstin)
+    if not match:
+        return GstinValidationResult(False, "malformed_structure")
+
+    state_code, pan, entity_code, _, checksum_char = match.groups()
+
+    expected_checksum = calculate_checksum(gstin[:14])
+    if checksum_char != expected_checksum:
+        return GstinValidationResult(
+            False,
+            f"checksum_mismatch:expected_{expected_checksum}_got_{checksum_char}",
+            state_code=state_code,
+            pan=pan,
+        )
+
+    return GstinValidationResult(True, "valid", state_code=state_code, pan=pan)
+
+
+if __name__ == "__main__":
+    # quick manual smoke test - not a substitute for tests/test_gstin_utils.py
+    samples = ["27AAPFU0939F1ZV", "27AAPFU0939F1ZX", "not-a-gstin", ""]
+    for s in samples:
+        print(s, "->", validate_gstin(s))
+</file>
+
+<file path="agents/risk_agent.py">
+"""
+risk_agent.py - rule-based risk scoring on top of verification_agent.
+
+Deliberately deterministic (no LLM in the decision path): every finding comes
+from a named rule, so a judge can ask "why is this RISK?" and get an exact
+answer. Two layers:
+
+  own_findings()   - rules that need only this one supplier (checksum, GST
+                     status, company age, paid-up capital, declared-vs-
+                     registered name).
+  ring_findings()  - rules that compare this supplier against the owner's
+                     other suppliers (shared bank account / shared address).
+                     This is what feeds the fraud-network graph.
+
+build_assessment() folds a list of findings into {trust_score, verdict,
+findings}. Verdict is the WORST severity present; score is 100 minus the sum
+of penalties (clamped 0-100), so the two can be explained independently.
+
+Verdicts: VERIFIED | REVIEW | RISK | REJECT
+"""
+
+import difflib
+import re
+from datetime import date, datetime
+
+from agents.trace import step, now
+
+SEVERITY_RANK = {"info": 0, "review": 1, "risk": 2, "reject": 3}
+VERDICT_BY_SEVERITY = {
+    "info": "VERIFIED",
+    "review": "REVIEW",
+    "risk": "RISK",
+    "reject": "REJECT",
+}
+
+# Thresholds live at the top so they are easy to defend and easy to tune.
+VERY_RECENT_DAYS = 90
+RECENT_DAYS = 365
+MIN_PAID_UP_CAPITAL_INR = 100_000  # Rs 1 lakh
+
+_NAME_NOISE = {"limited", "ltd", "pvt", "private", "llp", "inc", "co", "company", "the"}
+
+
+def _finding(code, severity, message, penalty=0):
+    return {"code": code, "severity": severity, "message": message, "penalty": penalty}
+
+
+# ---------- helpers ----------
+
+def parse_date(value):
+    """Accepts 'dd/mm/yyyy' (GST portal format) or ISO 'yyyy-mm-dd'. None if unparseable."""
+    if not value or not isinstance(value, str):
+        return None
+    value = value.strip()
+    for fmt in ("%d/%m/%Y", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(value, fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
+def _norm_name(name):
+    tokens = re.sub(r"[^a-z0-9 ]", " ", (name or "").lower()).split()
+    return " ".join(t for t in tokens if t not in _NAME_NOISE)
+
+
+def names_match(a, b):
+    a, b = _norm_name(a), _norm_name(b)
+    if not a or not b:
+        return True  # nothing to compare - don't raise a finding on missing data
+    if a in b or b in a:
+        return True
+    return difflib.SequenceMatcher(None, a, b).ratio() >= 0.6
+
+
+def norm_bank(value):
+    return re.sub(r"\D", "", value or "")
+
+
+def norm_address(value):
+    return " ".join(re.sub(r"[^a-z0-9 ]", " ", (value or "").lower()).split())
+
+
+def mask_bank(value):
+    digits = norm_bank(value)
+    return "****" + digits[-4:] if len(digits) >= 4 else "****"
+
+
+def _lookup_of(gstin_result):
+    return ((gstin_result or {}).get("data") or {}).get("gstin_lookup") or {}
+
+
+# ---------- layer 1: single-supplier rules ----------
+
+def own_findings(gstin_result, declared, today=None, trace=None):
+    """
+    gstin_result: VerificationResult.to_dict(), or None for records that never
+                  went through the live pipeline (crafted test cases).
+    declared:     dict of what the user typed / the seed file says. Optional keys:
+                  name, bank_account, address, registered_date,
+                  paid_up_capital_inr, claimed_business.
+    """
+    started = now()
+    today = today or date.today()
+    declared = declared or {}
+    findings = []
+
+    # Rule 1: offline format + checksum failure is an immediate REJECT.
+    if gstin_result and gstin_result.get("status") == "failed":
+        err = gstin_result.get("error") or ""
+        if err.startswith("invalid_gstin:"):
+            findings.append(_finding(
+                "invalid_gstin", "reject",
+                f"GSTIN failed offline validation ({err.split(':', 1)[1]}). "
+                "It cannot belong to a real taxpayer.", 100))
+            step(trace, "risk", "Rules evaluated: invalid GSTIN -> REJECT", ok=False, started=started)
+            return findings
+        findings.append(_finding(
+            "live_lookup_unavailable", "review",
+            "No live GST source could confirm this GSTIN, so it is unverified "
+            "(it may not exist, or the data providers were unreachable).", 30))
+
+    lookup = _lookup_of(gstin_result)
+
+    # Rule 2: GST registration status.
+    reg_status = (lookup.get("registration_status") or "").strip()
+    if reg_status and reg_status.upper() != "UNKNOWN":
+        if reg_status.lower() == "active":
+            findings.append(_finding("gstin_active", "info", "GSTIN is Active on the GST registry."))
+        else:
+            findings.append(_finding(
+                "gstin_not_active", "risk",
+                f"GSTIN registration status is '{reg_status}', not Active. "
+                "Do not pay invoices against a non-active registration.", 60))
+
+    # Rule 3: company age. Real registration date wins over anything declared.
+    raw = lookup.get("raw") or {}
+    reg_date = parse_date(raw.get("rgdt")) or parse_date(declared.get("registered_date"))
+    if reg_date:
+        age_days = (today - reg_date).days
+        if age_days < VERY_RECENT_DAYS:
+            findings.append(_finding(
+                "very_recently_registered", "review",
+                f"Registered only {age_days} days ago ({reg_date.isoformat()}). "
+                "Newly created entities are the most common shell-company pattern.", 30))
+        elif age_days < RECENT_DAYS:
+            findings.append(_finding(
+                "recently_registered", "review",
+                f"Registered {age_days} days ago ({reg_date.isoformat()}) - under a year of history.", 15))
+        else:
+            findings.append(_finding(
+                "established_registration", "info",
+                f"Registered {age_days // 365} year(s) ago ({reg_date.isoformat()})."))
+
+    # Rule 4: paid-up capital vs. claimed scale.
+    capital = declared.get("paid_up_capital_inr")
+    if isinstance(capital, (int, float)) and capital < MIN_PAID_UP_CAPITAL_INR:
+        claim = declared.get("claimed_business")
+        extra = f" while claiming: \"{claim}\"" if claim else ""
+        findings.append(_finding(
+            "minimal_paid_up_capital", "review",
+            f"Paid-up capital is only Rs {int(capital):,}{extra}. "
+            "Business scale looks inconsistent with capital.", 20))
+
+    # Rule 5: declared supplier name vs. the government-registered legal name.
+    legal_name = lookup.get("legal_name")
+    declared_name = declared.get("name")
+    if declared_name and legal_name and legal_name != "UNKNOWN":
+        if not names_match(declared_name, legal_name):
+            findings.append(_finding(
+                "name_mismatch", "review",
+                f"You entered '{declared_name}' but the GST registry lists '{legal_name}'. "
+                "This can be a trade name - confirm before paying.", 20))
+
+    if gstin_result is None:
+        findings.append(_finding(
+            "crafted_test_case", "info",
+            "Crafted test case (not a real registered entity) - used to exercise the risk rules."))
+
+    step(trace, "risk",
+         f"Single-supplier rules evaluated: {len(findings)} finding(s)",
+         ok=True, started=started)
+    return findings
+
+
+# ---------- layer 2: cross-supplier (fraud-ring) rules ----------
+
+def ring_findings(gstin, declared, peers, trace=None):
+    """
+    peers: the owner's OTHER suppliers as dicts with gstin, bank_account,
+           address, and name / legal_name. Callers must not include the
+           supplier itself (we also skip matching gstin defensively).
+    """
+    started = now()
+    declared = declared or {}
+    findings = []
+
+    my_bank = norm_bank(declared.get("bank_account"))
+    my_addr = norm_address(declared.get("address"))
+
+    def label(p):
+        return f"{p.get('legal_name') or p.get('name') or 'unnamed'} ({p.get('gstin')})"
+
+    if my_bank:
+        sharing = [p for p in peers
+                   if p.get("gstin") != gstin and norm_bank(p.get("bank_account")) == my_bank]
+        if sharing:
+            findings.append(_finding(
+                "shared_bank_account", "risk",
+                f"Bank account {mask_bank(my_bank)} is also used by {len(sharing)} other "
+                f"supplier(s): {', '.join(label(p) for p in sharing)}. "
+                "Different 'companies' paid into one account is the classic fraud-ring signal.", 50))
+
+    if my_addr:
+        sharing = [p for p in peers
+                   if p.get("gstin") != gstin and norm_address(p.get("address")) == my_addr]
+        if sharing:
+            findings.append(_finding(
+                "shared_address", "review",
+                f"Address is identical to {len(sharing)} other supplier(s): "
+                f"{', '.join(label(p) for p in sharing)}.", 25))
+
+    step(trace, "risk",
+         f"Cross-supplier rules evaluated against {len(peers)} other supplier(s): "
+         f"{len(findings)} finding(s)", ok=True, started=started)
+    return findings
+
+
+# ---------- fold findings into a verdict ----------
+
+def build_assessment(findings):
+    worst = "info"
+    total_penalty = 0
+    for f in findings:
+        if SEVERITY_RANK[f["severity"]] > SEVERITY_RANK[worst]:
+            worst = f["severity"]
+        total_penalty += f.get("penalty", 0)
+
+    score = max(0, min(100, 100 - total_penalty))
+    if worst == "reject":
+        score = 0
+
+    return {
+        "trust_score": int(score),
+        "verdict": VERDICT_BY_SEVERITY[worst],
+        "findings": findings,
+    }
+</file>
+
+<file path="agents/strands_wrapper.py">
+"""
+strands_wrapper.py
+
+Exposes the verification pipeline as Strands Agents SDK tools. This is the
+"Build It" track credit called out in the master plan - deliberately small
+and self-contained. Do not expand this file beyond wrapping existing
+functions; the deployed AWS stack (Ship It) and the UI (Best UI) are the
+actual build priorities, not this file.
+"""
+
+from strands import tool
+
+from agents.verification_agent import verify_gstin
+from agents.gstin_utils import validate_gstin
+
+
+@tool
+def check_gstin_format(gstin: str) -> dict:
+    """Offline structural + checksum validation of a GSTIN. No network call."""
+    result = validate_gstin(gstin)
+    return result.to_dict()
+
+
+@tool
+def verify_supplier_gstin(gstin: str) -> dict:
+    """
+    Run the full verification pipeline against a GSTIN: offline format check,
+    then live lookup via gstincheck.co.in (with data.gov.in cross-reference
+    where available). Returns a structured result, never raises.
+    """
+    result = verify_gstin(gstin)
+    return result.to_dict()
+</file>
+
+<file path="agents/trace.py">
+"""
+trace.py - tiny helper so every agent can record what it actually did.
+
+The trace is a list of {agent, message, ok, ms} dicts built while the pipeline
+runs. It is returned to the frontend as part of the /verify response and
+persisted on the VerificationLog row, so /verify/<id> can show the exact same
+steps later. Nothing in here is decorative: a line only exists if the step ran.
+"""
+
+import time
+
+
+def now():
+    return time.time()
+
+
+def step(trace, agent, message, ok=True, started=None):
+    """Append one step. `trace=None` is allowed so callers can skip tracing."""
+    if trace is None:
+        return
+    trace.append({
+        "agent": agent,
+        "message": message,
+        "ok": bool(ok),
+        "ms": int((time.time() - started) * 1000) if started else None,
+    })
+</file>
+
+<file path="data/.gitkeep">
+
+</file>
+
+<file path="data/fetch_seed_legit.py">
+"""
+Run this locally, once you have real GSTINs to test with:
+
+    python3 data/fetch_seed_legit.py 27AAPFU0939F1ZV 29AAAPL1234C1ZA ...
+
+It calls the real verification_agent (which hits gstincheck.co.in and
+data.gov.in with your keys from .env) for each GSTIN you pass in, and writes
+the results into data/seed_legit.json tagged source: live_api.
+
+Note: this script needs network access and your real .env keys - it's meant
+to be run on your machine, not in this container. Pick 5-10 real, currently
+registered GSTINs (your own business, a few well-known companies' public
+GSTINs, etc.) to seed with.
+"""
+
+import json
+import sys
+import os
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+
+from dotenv import load_dotenv
+load_dotenv()
+
+from agents.verification_agent import verify_gstin
+
+OUTPUT_PATH = os.path.join(os.path.dirname(__file__), "seed_legit.json")
+
+
+def main(gstins):
+    results = []
+    for gstin in gstins:
+        print(f"Verifying {gstin} ...")
+        result = verify_gstin(gstin)
+        entry = result.to_dict()
+        entry["source"] = "live_api"
+        results.append(entry)
+        if result.status == "failed":
+            print(f"  WARNING: {gstin} failed - {result.error}")
+        else:
+            print(f"  OK - status={result.status}, source={result.source}")
+
+    with open(OUTPUT_PATH, "w") as f:
+        json.dump({"_note": "Real, live-fetched results tagged source: live_api. See fetch_seed_legit.py.", "companies": results}, f, indent=2)
+
+    print(f"\nWrote {len(results)} entries to {OUTPUT_PATH}")
+
+
+if __name__ == "__main__":
+    if len(sys.argv) < 2:
+        print("Usage: python3 data/fetch_seed_legit.py GSTIN1 GSTIN2 ...")
+        sys.exit(1)
+    main(sys.argv[1:])
+</file>
+
+<file path="data/seed_fraud.json">
+{
+  "_note": "These are deliberately hand-crafted, not scraped/real. Each case exercises one specific risk-agent branch. This is a standard, expected hackathon technique for proving a detection system actually detects something - documented plainly here rather than hidden, per the master plan's honesty framing.",
+  "cases": [
+    {
+      "case_id": "fraud_001_malformed_gstin",
+      "source": "crafted_test_case",
+      "gstin": "27AAPFU0939F1ZX",
+      "expected_verdict": "REJECT",
+      "reason": "Checksum digit deliberately tampered (last char changed from V to X) - should fail offline Luhn mod-36 validation before any API call is even made."
+    },
+    {
+      "case_id": "fraud_002_shell_company",
+      "source": "crafted_test_case",
+      "gstin": "07AAACT2727Q1ZY",
+      "supplier_id": "SUP-FRAUD-002",
+      "name": "Bright Future Trading Co",
+      "registered_date": "2026-08-15",
+      "paid_up_capital_inr": 10000,
+      "claimed_business": "Bulk industrial steel supply, claims 50Cr annual turnover",
+      "expected_verdict": "REVIEW",
+      "reason": "Real-looking GSTIN structure, but registered under 60 days ago with minimal paid-up capital and a claimed business scale wildly inconsistent with company age/capital - classic shell-company pattern."
+    },
+    {
+      "case_id": "fraud_003_ring_node_a",
+      "source": "crafted_test_case",
+      "gstin": "29AAAPL1234C1ZA",
+      "supplier_id": "SUP-FRAUD-003A",
+      "name": "Sunrise Enterprises",
+      "bank_account": "000111222333",
+      "address": "Plot 14, Industrial Area Phase 2, Bengaluru",
+      "expected_verdict": "RISK",
+      "reason": "Node 1 of 3 in the fraud-ring case. Feeds the fraud-network graph (Round 6) - flagged because it shares bank_account with fraud_004 and fraud_005 below despite three different registered names/addresses."
+    },
+    {
+      "case_id": "fraud_004_ring_node_b",
+      "source": "crafted_test_case",
+      "gstin": "33AABCT3518Q1Z3",
+      "supplier_id": "SUP-FRAUD-003B",
+      "name": "Sunrise Traders",
+      "bank_account": "000111222333",
+      "address": "Unit 7, MG Road Business Park, Chennai",
+      "expected_verdict": "RISK",
+      "reason": "Node 2 of 3, same bank_account as fraud_003. Similar name pattern ('Sunrise') and identical bank account across a different declared address/city is the exact cross-reference signal /fraud-network is built to surface."
+    },
+    {
+      "case_id": "fraud_005_ring_node_c",
+      "source": "crafted_test_case",
+      "gstin": "06AAFCS1234D1ZV",
+      "supplier_id": "SUP-FRAUD-003C",
+      "name": "New Sunrise Impex",
+      "bank_account": "000111222333",
+      "address": "Sector 21, Industrial Estate, Gurugram",
+      "expected_verdict": "RISK",
+      "reason": "Node 3 of 3, completing the 3-node ring sharing one bank_account across three 'different' suppliers in three different cities."
+    }
+  ]
+}
+</file>
+
+<file path="docs/.gitkeep">
+
+</file>
+
+<file path="frontend/components/.gitkeep">
+
+</file>
+
+<file path="frontend/pages/.gitkeep">
+
+</file>
+
+<file path="frontend/styles/.gitkeep">
+
+</file>
+
+<file path="infra/.gitkeep">
+
+</file>
+
+<file path="lambda/__init__.py">
+
+</file>
+
+<file path="lambda/.gitkeep">
+
+</file>
+
+<file path="lambda/common.py">
+"""
+Shared helpers for the API Lambdas that ship with CodeUri ../ (verify, read
+endpoints, demo seed). The three auth Lambdas use CodeUri ../lambda/ and do
+not import this.
+
+Import from a handler as:   from . import common
+(`lambda` is a Python keyword, so `from lambda import ...` is a syntax error;
+a relative import works because Lambda loads handlers as `lambda.<module>`.)
+"""
+
+import decimal
+import json
+
+import boto3
+from botocore.exceptions import ClientError
+
+cognito = boto3.client("cognito-idp")
+
+
+def get_user_id(event):
+    """Validate the bearer token against Cognito and return the user's id, else None."""
+    headers = event.get("headers") or {}
+    auth_header = headers.get("Authorization") or headers.get("authorization") or ""
+    if not auth_header.startswith("Bearer "):
+        return None
+    access_token = auth_header.replace("Bearer ", "", 1).strip()
+    try:
+        return cognito.get_user(AccessToken=access_token)["Username"]
+    except ClientError:
+        return None
+
+
+def _json_default(o):
+    # DynamoDB hands numbers back as Decimal, which json can't serialise.
+    if isinstance(o, decimal.Decimal):
+        return int(o) if o == o.to_integral_value() else float(o)
+    raise TypeError(f"not serialisable: {type(o)}")
+
+
+def response(status_code, body_dict):
+    return {
+        "statusCode": status_code,
+        "headers": {
+            "Content-Type": "application/json",
+            "Access-Control-Allow-Origin": "*",
+        },
+        "body": json.dumps(body_dict, default=_json_default),
+    }
+
+
+def ok(data, meta=None):
+    """{ data, meta, error } envelope for the read endpoints."""
+    return response(200, {"data": data, "meta": meta or {}, "error": None})
+
+
+def fail(status_code, code):
+    return response(status_code, {"data": None, "meta": {}, "error": code})
+</file>
+
+<file path="lambda/demo_seed.py">
+"""
+POST /demo/seed - loads the project's two seed sets into the CALLER's account:
+
+  data/seed_legit.json  5 real companies, pulled live earlier and cached
+                        (data_origin = live_api)
+  data/seed_fraud.json  hand-crafted fraud cases (data_origin = crafted_test_case)
+
+Crafted GSTINs are structurally valid but not real registered entities, so
+they are written directly instead of going through the live GST lookup. They
+still run through the SAME risk rules as a live check - the shared-bank-account
+ring is detected by risk_agent.ring_findings(), not hardcoded here.
+
+Idempotent: suppliers are upserts on (owner, gstin) and log ids are
+deterministic ("seed-<gstin>"), so pressing the button twice changes nothing.
+"""
+
+import json
+import os
+from datetime import date, timedelta
+
+from botocore.exceptions import ClientError
+
+from agents import risk_agent
+
+from . import common, store
+
+DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")
+
+# The seed file stores an absolute registration date, which would silently age
+# out of the "very recently registered" rule as real time passes. Pin the
+# crafted shell company to a fixed age relative to whenever it is seeded.
+CRAFTED_REGISTERED_DAYS_AGO = {"fraud_002_shell_company": 35}
+
+
+def _load(name):
+    with open(os.path.join(DATA_DIR, name), encoding="utf-8") as f:
+        return json.load(f)
+
+
+def _crafted_rows(owner, today, ts):
+    rows = []
+    for case in _load("seed_fraud.json")["cases"]:
+        if not case.get("supplier_id"):
+            continue  # fraud_001 is a bare malformed GSTIN - demo it through /verify instead
+        declared = {k: case[k] for k in ("name", "bank_account", "address", "claimed_business",
+                                        "paid_up_capital_inr") if case.get(k) not in (None, "")}
+        days_ago = CRAFTED_REGISTERED_DAYS_AGO.get(case["case_id"])
+        if days_ago is not None:
+            declared["registered_date"] = (today - timedelta(days=days_ago)).isoformat()
+        elif case.get("registered_date"):
+            declared["registered_date"] = case["registered_date"]
+
+        own = risk_agent.own_findings(None, declared, today=today)
+        row = {
+            "owner_user_id": owner, "gstin": case["gstin"],
+            "legal_name": case["name"], "status": "crafted",
+            "source": "crafted_test_case", "data_origin": "crafted_test_case",
+            "registration_status": "", "own_findings_json": json.dumps(own),
+            "last_verified_at": ts, "last_log_id": f"seed-{case['gstin']}",
+        }
+        row.update(declared)
+        rows.append((row, "crafted_test_case", "Loaded crafted test case from data/seed_fraud.json "
+                                               "(not a real registered entity)."))
+    return rows
+
+
+def _legit_rows(owner, today, ts):
+    rows = []
+    for company in _load("seed_legit.json")["companies"]:
+        result = {"gstin": company["gstin"], "status": company.get("status", "degraded"),
+                  "source": "gstincheck.co.in", "data": company.get("data", {}), "error": None}
+        lookup = (result["data"] or {}).get("gstin_lookup") or {}
+        own = risk_agent.own_findings(result, {}, today=today)
+        row = {
+            "owner_user_id": owner, "gstin": company["gstin"],
+            "legal_name": lookup.get("legal_name", ""), "status": result["status"],
+            "source": "gstincheck.co.in (cached)", "data_origin": "live_api",
+            "registration_status": lookup.get("registration_status", ""),
+            "own_findings_json": json.dumps(own),
+            "last_verified_at": ts, "last_log_id": f"seed-{company['gstin']}",
+        }
+        reg_date = risk_agent.parse_date(((lookup.get("raw") or {}).get("rgdt")))
+        if reg_date:
+            row["registered_date"] = reg_date.isoformat()
+        rows.append((row, "live_api", "Loaded from cached live GSTIN lookup in data/seed_legit.json."))
+    return rows
+
+
+def handler(event, context):
+    owner = common.get_user_id(event)
+    if not owner:
+        return common.fail(401, "missing_or_invalid_token")
+
+    try:
+        today, ts = date.today(), store.now_ts()
+        seeded = _legit_rows(owner, today, ts) + _crafted_rows(owner, today, ts)
+
+        for row, _, _ in seeded:
+            store.suppliers_table().put_item(Item=row)
+
+        # Now every node exists, so ring rules can see each other.
+        assessments = store.refresh_assessments(owner)
+
+        for row, origin, note in seeded:
+            a = assessments[row["gstin"]]
+            store.log_table().put_item(Item={
+                "owner_user_id": owner, "log_id": row["last_log_id"], "gstin": row["gstin"],
+                "name": row["legal_name"], "status": row["status"],
+                "verdict": a["verdict"], "trust_score": a["trust_score"],
+                "findings_json": json.dumps(a["findings"]),
+                "trace_json": json.dumps([{"agent": "seed", "message": note, "ok": True, "ms": None}]),
+                "data_origin": origin, "source": row["source"], "error": "",
+                "timestamp": ts, "raw_result": json.dumps({"gstin": row["gstin"], "seeded": True}),
+            })
+
+        by_verdict = {}
+        for a in assessments.values():
+            by_verdict[a["verdict"]] = by_verdict.get(a["verdict"], 0) + 1
+        return common.ok({"seeded": len(seeded)}, {"by_verdict": by_verdict})
+
+    except ClientError as e:
+        return common.fail(500, "dynamodb_error:" + e.response["Error"]["Message"])
+</file>
+
+<file path="lambda/get_history.py">
+import json
+
+from . import common, store
+
+MAX_LIMIT = 200
+
+
+def handler(event, context):
+    user_id = common.get_user_id(event)
+    if not user_id:
+        return common.fail(401, "missing_or_invalid_token")
+
+    params = event.get("queryStringParameters") or {}
+    gstin_filter = (params.get("gstin") or "").strip().upper()
+    try:
+        limit = max(1, min(int(params.get("limit", 100)), MAX_LIMIT))
+    except ValueError:
+        return common.fail(400, "invalid_limit")
+
+    rows = store.query_all(store.log_table(), user_id)
+    if gstin_filter:
+        rows = [r for r in rows if r["gstin"].startswith(gstin_filter)]
+    rows.sort(key=lambda r: int(r.get("timestamp", 0)), reverse=True)
+
+    items = [{
+        "log_id": r["log_id"],
+        "gstin": r["gstin"],
+        "name": r.get("name", ""),
+        "status": r.get("status", ""),
+        "verdict": r.get("verdict", ""),
+        "trust_score": int(r["trust_score"]) if r.get("trust_score") is not None else None,
+        "source": r.get("source", ""),
+        "data_origin": r.get("data_origin", "live_api"),
+        "error": r.get("error", ""),
+        "timestamp": int(r.get("timestamp", 0)),
+    } for r in rows[:limit]]
+
+    return common.ok(items, {"total": len(rows), "returned": len(items)})
+</file>
+
+<file path="lambda/get_report.py">
+import json
+
+from . import common, store
+
+
+def handler(event, context):
+    user_id = common.get_user_id(event)
+    if not user_id:
+        return common.fail(401, "missing_or_invalid_token")
+
+    log_id = ((event.get("pathParameters") or {}).get("log_id") or "").strip()
+    if not log_id:
+        return common.fail(400, "log_id_required")
+
+    # The key is (owner_user_id, log_id): someone else's log_id simply isn't
+    # found for this user, so we answer 404 - never 403, which would confirm
+    # that the record exists.
+    row = store.log_table().get_item(Key={"owner_user_id": user_id, "log_id": log_id}).get("Item")
+    if not row:
+        return common.fail(404, "not_found")
+
+    return common.ok({
+        "log_id": row["log_id"],
+        "gstin": row["gstin"],
+        "name": row.get("name", ""),
+        "status": row.get("status", ""),
+        "verdict": row.get("verdict", ""),
+        "trust_score": int(row["trust_score"]) if row.get("trust_score") is not None else None,
+        "findings": json.loads(row.get("findings_json") or "[]"),
+        "trace": json.loads(row.get("trace_json") or "[]"),
+        "source": row.get("source", ""),
+        "data_origin": row.get("data_origin", "live_api"),
+        "error": row.get("error", ""),
+        "timestamp": int(row.get("timestamp", 0)),
+        "result": json.loads(row.get("raw_result") or "{}"),
+        "summary": row.get("summary", ""), 
+        "summary_source": row.get("summary_source", ""),
+    })
+</file>
+
+<file path="lambda/get_stats.py">
+from . import common, store
+
+
+def handler(event, context):
+    """Public (no auth): the real, shared verification counter for the landing page."""
+    item = store.stats_table().get_item(Key={"stat_id": "global"}).get("Item") or {}
+    return common.ok({"total_checks": int(item.get("total_checks", 0))})
+</file>
+
+<file path="lambda/get_suppliers.py">
+from . import common, store
+
+
+def handler(event, context):
+    user_id = common.get_user_id(event)
+    if not user_id:
+        return common.fail(401, "missing_or_invalid_token")
+
+    rows = store.query_all(store.suppliers_table(), user_id)
+    items = sorted((store.supplier_view(r) for r in rows),
+                   key=lambda s: s["last_verified_at"], reverse=True)
+
+    by_verdict = {}
+    for s in items:
+        by_verdict[s["verdict"] or "UNSCORED"] = by_verdict.get(s["verdict"] or "UNSCORED", 0) + 1
+
+    return common.ok(items, {"total": len(items), "by_verdict": by_verdict})
+</file>
+
+<file path="lambda/store.py">
+"""
+DynamoDB helpers shared by verify_supplier and demo_seed.
+
+Key idea: each Suppliers row stores the supplier's OWN findings (rules that
+need only that supplier) plus the declared fields (bank_account, address...).
+Cross-supplier findings (shared bank account / address) are NOT stored - they
+are recomputed from all of the owner's rows by refresh_assessments(). That is
+why adding one new supplier can flip an older supplier to RISK: the ring only
+exists once both nodes are in the table.
+"""
+
+import json
+import os
+import time
+
+import boto3
+from boto3.dynamodb.conditions import Key
+
+from agents import risk_agent
+
+dynamodb = boto3.resource("dynamodb")
+
+DECLARED_FIELDS = (
+    "name", "bank_account", "address",
+    "registered_date", "paid_up_capital_inr", "claimed_business",
+)
+
+
+def suppliers_table():
+    return dynamodb.Table(os.environ["SUPPLIERS_TABLE"])
+
+
+def log_table():
+    return dynamodb.Table(os.environ["VERIFICATION_LOG_TABLE"])
+
+
+def stats_table():
+    return dynamodb.Table(os.environ["STATS_TABLE"])
+
+
+def query_all(table, owner_user_id):
+    """Every row for one owner (partition key), following pagination."""
+    items, kwargs = [], {"KeyConditionExpression": Key("owner_user_id").eq(owner_user_id)}
+    while True:
+        resp = table.query(**kwargs)
+        items.extend(resp.get("Items", []))
+        if "LastEvaluatedKey" not in resp:
+            return items
+        kwargs["ExclusiveStartKey"] = resp["LastEvaluatedKey"]
+
+
+def get_supplier(owner_user_id, gstin):
+    resp = suppliers_table().get_item(Key={"owner_user_id": owner_user_id, "gstin": gstin})
+    return resp.get("Item")
+
+
+def declared_from_row(row):
+    declared = {k: row.get(k) for k in DECLARED_FIELDS if row.get(k) not in (None, "")}
+    if "paid_up_capital_inr" in declared:
+        declared["paid_up_capital_inr"] = int(declared["paid_up_capital_inr"])
+    return declared
+
+
+def refresh_assessments(owner_user_id, rows=None):
+    """
+    Recompute verdict/score for every supplier the owner has, using each row's
+    stored own_findings plus fresh ring findings against all the other rows.
+    Writes back only rows whose result changed. Returns {gstin: assessment}.
+    """
+    rows = rows if rows is not None else query_all(suppliers_table(), owner_user_id)
+    result = {}
+    for row in rows:
+        if "own_findings_json" not in row:
+            continue  # legacy row from before risk scoring existed: stays "Not scored" until re-verified
+        own = json.loads(row.get("own_findings_json") or "[]")
+        peers = [r for r in rows if r["gstin"] != row["gstin"]]
+        ring = risk_agent.ring_findings(row["gstin"], declared_from_row(row), peers)
+        assessment = risk_agent.build_assessment(own + ring)
+        result[row["gstin"]] = assessment
+
+        findings_json = json.dumps(assessment["findings"])
+        if (row.get("verdict") != assessment["verdict"]
+                or int(row.get("trust_score", -1)) != assessment["trust_score"]
+                or row.get("findings_json") != findings_json):
+            suppliers_table().update_item(
+                Key={"owner_user_id": owner_user_id, "gstin": row["gstin"]},
+                UpdateExpression="SET verdict = :v, trust_score = :s, findings_json = :f",
+                ExpressionAttributeValues={
+                    ":v": assessment["verdict"],
+                    ":s": assessment["trust_score"],
+                    ":f": findings_json,
+                },
+            )
+    return result
+
+
+def bump_verification_counter():
+    """Atomic, shared, real counter behind the landing page number."""
+    stats_table().update_item(
+        Key={"stat_id": "global"},
+        UpdateExpression="ADD total_checks :one",
+        ExpressionAttributeValues={":one": 1},
+    )
+
+
+def supplier_view(row):
+    """Row -> JSON-safe dict for the API (parses stored JSON strings)."""
+    return {
+        "gstin": row["gstin"],
+        "name": row.get("legal_name") or row.get("name") or "",
+        "declared_name": row.get("name", ""),
+        "legal_name": row.get("legal_name", ""),
+        "bank_account_masked": risk_agent.mask_bank(row["bank_account"]) if row.get("bank_account") else "",
+        "address": row.get("address", ""),
+        "status": row.get("status", ""),
+        "source": row.get("source", ""),
+        "data_origin": row.get("data_origin", "live_api"),
+        "verdict": row.get("verdict", ""),
+        "trust_score": int(row["trust_score"]) if row.get("trust_score") is not None else None,
+        "findings": json.loads(row.get("findings_json") or "[]"),
+        "registration_status": row.get("registration_status", ""),
+        "last_verified_at": int(row.get("last_verified_at", 0)),
+        "last_log_id": row.get("last_log_id", ""),
+    }
+
+
+def now_ts():
+    return int(time.time())
+</file>
+
+<file path="tests/.gitkeep">
+
+</file>
+
+<file path="tests/test_gstin_utils.py">
+import sys
+import os
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+
+from agents.gstin_utils import validate_gstin, calculate_checksum
+
+
+# Known-good GSTINs (checksum computed correctly, real structure).
+# 27AAPFU0939F1ZV is a widely-used public reference GSTIN in tutorials/docs -
+# useful as a sanity anchor since its checksum is independently verifiable.
+VALID_GSTINS = [
+    "27AAPFU0939F1ZV",
+    "29AAAPL1234C1ZA",
+    "07AAACT2727Q1ZY",
+    "33AABCT3518Q1Z3",
+    "06AAFCS1234D1ZV",
+]
+
+# Known-bad GSTINs, one failure mode each - this is what Round 1's failure
+# handling has to survive without crashing the pipeline.
+INVALID_CASES = {
+    "27AAPFU0939F1ZX": "checksum_mismatch",   # last char tampered
+    "27AAPFU0939F1Z": "wrong_length",         # one char short
+    "27AAPFU0939F1ZVV": "wrong_length",       # one char too long
+    "AAAAAAAAAAAAAAA": "malformed_structure", # right length, wrong shape
+    "": "empty_or_not_a_string",
+    None: "empty_or_not_a_string",
+    "27aapfu0939f1zv": None,  # lowercase input - should normalize and pass
+}
+
+
+def test_valid_gstins_pass():
+    for gstin in VALID_GSTINS:
+        result = validate_gstin(gstin)
+        assert result.is_valid, f"expected {gstin} to be valid, got {result.reason}"
+
+
+def test_invalid_gstins_fail_with_expected_reason():
+    for gstin, expected_reason_prefix in INVALID_CASES.items():
+        if expected_reason_prefix is None:
+            continue
+        result = validate_gstin(gstin)
+        assert not result.is_valid, f"expected {gstin!r} to be invalid"
+        assert result.reason.startswith(expected_reason_prefix), (
+            f"{gstin!r}: expected reason starting with {expected_reason_prefix!r}, "
+            f"got {result.reason!r}"
+        )
+
+
+def test_lowercase_input_is_normalized():
+    result = validate_gstin("27aapfu0939f1zv")
+    assert result.is_valid, f"lowercase input should normalize and pass, got {result.reason}"
+
+
+def test_checksum_function_matches_known_reference():
+    # 27AAPFU0939F1Z + checksum should equal V for the reference GSTIN
+    assert calculate_checksum("27AAPFU0939F1Z") == "V"
+
+
+def test_never_raises_on_garbage_input():
+    garbage_inputs = [12345, [], {}, "💥💥💥", " " * 15]
+    for g in garbage_inputs:
+        try:
+            result = validate_gstin(g)
+        except Exception as e:
+            raise AssertionError(f"validate_gstin raised on {g!r}: {e}")
+        assert result.is_valid is False
+
+
+if __name__ == "__main__":
+    test_valid_gstins_pass()
+    test_invalid_gstins_fail_with_expected_reason()
+    test_lowercase_input_is_normalized()
+    test_checksum_function_matches_known_reference()
+    test_never_raises_on_garbage_input()
+    print("All GSTIN validator tests passed.")
+</file>
+
+<file path="tests/test_risk_agent.py">
+from datetime import date
+
+from agents import risk_agent as ra
+
+TODAY = date(2026, 9, 19)
+
+
+def lookup_result(status="Active", rgdt="01/07/2017", legal_name="INFOSYS LIMITED"):
+    return {
+        "gstin": "29AAACI4798L1ZU", "status": "degraded", "source": "gstincheck.co.in", "error": None,
+        "data": {"gstin_lookup": {"legal_name": legal_name, "registration_status": status,
+                                  "raw": {"rgdt": rgdt}}},
+    }
+
+
+def codes(findings):
+    return [f["code"] for f in findings]
+
+
+def test_clean_established_supplier_is_verified():
+    a = ra.build_assessment(ra.own_findings(lookup_result(), {}, today=TODAY))
+    assert a["verdict"] == "VERIFIED"
+    assert a["trust_score"] == 100
+
+
+def test_invalid_gstin_is_reject_with_zero_score():
+    failed = {"gstin": "27AAPFU0939F1ZX", "status": "failed", "source": "offline_validation",
+              "data": {}, "error": "invalid_gstin:checksum_mismatch:expected_V_got_X"}
+    a = ra.build_assessment(ra.own_findings(failed, {}, today=TODAY))
+    assert a["verdict"] == "REJECT"
+    assert a["trust_score"] == 0
+    assert "invalid_gstin" in codes(a["findings"])
+
+
+def test_lookup_outage_is_review_not_reject():
+    failed = {"gstin": "29AAAPL1234C1ZA", "status": "failed", "source": "none",
+              "data": {}, "error": "all_gstin_lookups_failed:gstincheck.co.in rate-limited"}
+    a = ra.build_assessment(ra.own_findings(failed, {}, today=TODAY))
+    assert a["verdict"] == "REVIEW"
+    assert a["trust_score"] == 70
+
+
+def test_cancelled_gstin_is_risk():
+    a = ra.build_assessment(ra.own_findings(lookup_result(status="Cancelled"), {}, today=TODAY))
+    assert a["verdict"] == "RISK"
+
+
+def test_shell_company_is_review():
+    declared = {"registered_date": "2026-08-15", "paid_up_capital_inr": 10000,
+                "claimed_business": "Bulk steel, 50Cr turnover"}
+    a = ra.build_assessment(ra.own_findings(None, declared, today=TODAY))
+    assert a["verdict"] == "REVIEW"
+    assert {"very_recently_registered", "minimal_paid_up_capital"} <= set(codes(a["findings"]))
+    assert a["trust_score"] == 50
+
+
+def test_old_company_is_not_flagged_as_recent():
+    assert "very_recently_registered" not in codes(
+        ra.own_findings(lookup_result(rgdt="01/07/2017"), {}, today=TODAY))
+
+
+def test_name_mismatch_flagged_but_close_names_pass():
+    assert "name_mismatch" in codes(
+        ra.own_findings(lookup_result(), {"name": "Random Traders"}, today=TODAY))
+    assert "name_mismatch" not in codes(
+        ra.own_findings(lookup_result(), {"name": "Infosys Ltd"}, today=TODAY))
+
+
+def test_ring_detects_shared_bank_account_and_masks_it():
+    peers = [
+        {"gstin": "B", "legal_name": "Sunrise Traders", "bank_account": "0001 1122 2333", "address": "x"},
+        {"gstin": "C", "legal_name": "New Sunrise Impex", "bank_account": "000111222333", "address": "y"},
+        {"gstin": "D", "legal_name": "Unrelated", "bank_account": "999", "address": "z"},
+    ]
+    f = ra.ring_findings("A", {"bank_account": "000111222333"}, peers)
+    assert codes(f) == ["shared_bank_account"]
+    assert "2 other" in f[0]["message"]
+    assert "000111222333" not in f[0]["message"]          # never leak the full number
+    assert ra.build_assessment(f)["verdict"] == "RISK"
+
+
+def test_ring_ignores_self_and_empty_bank():
+    peers = [{"gstin": "A", "bank_account": "123456"}]
+    assert ra.ring_findings("A", {"bank_account": "123456"}, peers) == []
+    assert ra.ring_findings("A", {}, [{"gstin": "B", "bank_account": ""}]) == []
+
+
+def test_shared_address_is_review():
+    peers = [{"gstin": "B", "address": "Plot 14, Industrial Area"}]
+    f = ra.ring_findings("A", {"address": "plot 14 industrial area"}, peers)
+    assert codes(f) == ["shared_address"]
+    assert ra.build_assessment(f)["verdict"] == "REVIEW"
+
+
+def test_worst_severity_wins_and_score_clamped():
+    findings = [ra._finding("a", "review", "", 80), ra._finding("b", "risk", "", 80)]
+    a = ra.build_assessment(findings)
+    assert a["verdict"] == "RISK" and a["trust_score"] == 0
+</file>
+
+<file path="amplify.yml">
+version: 1
+frontend:
+  phases:
+    build:
+      commands:
+        - echo "no build step"
+  artifacts:
+    baseDirectory: frontend
+    files:
+      - "**/*"
+  cache:
+    paths: []
+</file>
+
+<file path="data/seed_legit.json">
+{
+  "_note": "Real, live-fetched results tagged source: live_api. See fetch_seed_legit.py.",
+  "companies": [
+    {
+      "gstin": "29AAACI4798L1ZU",
+      "status": "degraded",
+      "source": "live_api",
+      "data": {
+        "gstin_lookup": {
+          "legal_name": "INFOSYS LIMITED",
+          "registration_status": "Active",
+          "taxpayer_type": "Regular",
+          "address": {
+            "flno": "",
+            "lg": "",
+            "loc": "BANGALORE",
+            "pncd": "560100",
+            "bnm": "44 AND 97A",
+            "city": "",
+            "lt": "",
+            "stcd": "Karnataka",
+            "bno": "0",
+            "dst": "Bengaluru Urban",
+            "st": "ELECTRONIC CITY"
+          },
+          "raw": {
+            "ntcrbs": "SPO",
+            "adhrVFlag": "Yes",
+            "lgnm": "INFOSYS LIMITED",
+            "stj": "State - Karnataka,Division - Large Taxpayers Unit -LTU, Bengaluru, LOCAL GST Office - LGSTO LTU, Bengaluru (Jurisdictional Office)",
+            "dty": "Regular",
+            "cxdt": "",
+            "gstin": "29AAACI4798L1ZU",
+            "nba": [
+              "Bonded Warehouse",
+              "Works Contract",
+              "Service Provision",
+              "Recipient of Goods or Services",
+              "EOU / STP / EHTP",
+              "Export",
+              "Supplier of Services",
+              "Import",
+              "Warehouse / Depot",
+              "Leasing Business",
+              "Factory / Manufacturing"
+            ],
+            "ekycVFlag": "Not Applicable",
+            "cmpRt": "NA",
+            "rgdt": "01/07/2017",
+            "ctb": "Public Limited Company",
+            "pradr": {
+              "adr": "3RD CROSS, INFOSYS LIMITED, 44 AND 97A, ELECTRONIC CITY, BANGALORE, Bengaluru Urban, Karnataka, 560100",
+              "addr": {
+                "flno": "",
+                "lg": "",
+                "loc": "BANGALORE",
+                "pncd": "560100",
+                "bnm": "44 AND 97A",
+                "city": "",
+                "lt": "",
+                "stcd": "Karnataka",
+                "bno": "0",
+                "dst": "Bengaluru Urban",
+                "st": "ELECTRONIC CITY"
+              }
+            },
+            "sts": "Active",
+            "tradeNam": "INFOSYS LIMITED",
+            "isFieldVisitConducted": "No",
+            "adhrVdt": "08/09/2026",
+            "ctj": "State - CBIC,Zone - BENGALURU,Commissionerate - BENGALURU-SOUTH,Division - SOUTH DIVISION-8,Range - RANGE-BSD8",
+            "einvoiceStatus": "Yes",
+            "lstupdt": "",
+            "adadr": [],
+            "ctjCd": "",
+            "errorMsg": null,
+            "stjCd": ""
+          }
+        },
+        "company_record": null,
+        "state_code": "29",
+        "pan": "AAACI4798L"
+      },
+      "error": null
+    },
+    {
+      "gstin": "07AADCD4946L1ZC",
+      "status": "degraded",
+      "source": "live_api",
+      "data": {
+        "gstin_lookup": {
+          "legal_name": "ETERNAL LIMITED",
+          "registration_status": "Active",
+          "taxpayer_type": "Regular",
+          "address": {
+            "flno": "",
+            "lg": "",
+            "loc": "Delhi",
+            "pncd": "110019",
+            "bnm": "94 MEGHDOOT",
+            "city": "",
+            "lt": "",
+            "stcd": "Delhi",
+            "bno": "0",
+            "dst": "South Delhi",
+            "st": "NEHRU PLACE"
+          },
+          "raw": {
+            "ntcrbs": "SPO",
+            "adhrVFlag": "No",
+            "lgnm": "ETERNAL LIMITED",
+            "stj": "State - Delhi,Zone - Zone 10,Ward - Ward 300 (E-Commerce) (Jurisdictional Office)",
+            "dty": "Regular",
+            "cxdt": "",
+            "gstin": "07AADCD4946L1ZC",
+            "nba": [
+              "Service Provision",
+              "Supplier of Services",
+              "Warehouse / Depot",
+              "Office / Sale Office",
+              "Retail Business",
+              "Recipient of Goods or Services"
+            ],
+            "ekycVFlag": "No",
+            "cmpRt": "NA",
+            "rgdt": "01/07/2017",
+            "ctb": "Public Limited Company",
+            "pradr": {
+              "adr": "GROUND FLOOR 12A, 94 MEGHDOOT, NEHRU PLACE, Delhi, South Delhi, Delhi, 110019",
+              "addr": {
+                "flno": "",
+                "lg": "",
+                "loc": "Delhi",
+                "pncd": "110019",
+                "bnm": "94 MEGHDOOT",
+                "city": "",
+                "lt": "",
+                "stcd": "Delhi",
+                "bno": "0",
+                "dst": "South Delhi",
+                "st": "NEHRU PLACE"
+              }
+            },
+            "sts": "Active",
+            "tradeNam": "ETERNAL LIMITED",
+            "isFieldVisitConducted": "Yes",
+            "ctj": "State - CBIC,Zone - DELHI,Commissionerate - DELHI EAST,Division - NEHRU PLACE,Range - RANGE - 169",
+            "einvoiceStatus": "Yes",
+            "lstupdt": "",
+            "adadr": [],
+            "ctjCd": "",
+            "errorMsg": null,
+            "stjCd": ""
+          }
+        },
+        "company_record": null,
+        "state_code": "07",
+        "pan": "AADCD4946L"
+      },
+      "error": null
+    },
+    {
+      "gstin": "27AAFCN5072P1ZV",
+      "status": "degraded",
+      "source": "live_api",
+      "data": {
+        "gstin_lookup": {
+          "legal_name": "NYKAA E- RETAIL LIMITED",
+          "registration_status": "Active",
+          "taxpayer_type": "Regular",
+          "address": {
+            "flno": "",
+            "lg": "",
+            "loc": "Mumbai",
+            "pncd": "400013",
+            "bnm": "Sun Mill Compound",
+            "city": "",
+            "lt": "",
+            "stcd": "Maharashtra",
+            "bno": "0",
+            "dst": "Mumbai",
+            "st": "Lower Parel West"
+          },
+          "raw": {
+            "ntcrbs": "TRD:TRR",
+            "adhrVFlag": "Yes",
+            "lgnm": "NYKAA E- RETAIL LIMITED",
+            "stj": "State - Maharashtra,Zone - MUMBAI_NORTH_WEST,Division - MAZGAON,Charge - DELISLE_ROAD_701",
+            "dty": "Regular",
+            "cxdt": "",
+            "gstin": "27AAFCN5072P1ZV",
+            "nba": [
+              "Retail Business",
+              "Warehouse / Depot",
+              "Office / Sale Office",
+              "Export",
+              "Supplier of Services",
+              "Recipient of Goods or Services",
+              "Bonded Warehouse"
+            ],
+            "ekycVFlag": "Not Applicable",
+            "cmpRt": "NA",
+            "rgdt": "01/07/2017",
+            "ctb": "Public Limited Company",
+            "pradr": {
+              "adr": "104, Vasan Udyog Bhawan, Senapati Bapat Marg, Sun Mill Compound, Lower Parel West, Mumbai, Mumbai, Maharashtra, 400013",
+              "addr": {
+                "flno": "",
+                "lg": "",
+                "loc": "Mumbai",
+                "pncd": "400013",
+                "bnm": "Sun Mill Compound",
+                "city": "",
+                "lt": "",
+                "stcd": "Maharashtra",
+                "bno": "0",
+                "dst": "Mumbai",
+                "st": "Lower Parel West"
+              }
+            },
+            "sts": "Active",
+            "tradeNam": "NYKAA E-RETAIL LIMITED",
+            "isFieldVisitConducted": "No",
+            "adhrVdt": "18/09/2026",
+            "ctj": "State - CBIC,Zone - MUMBAI,Commissionerate - MUMBAI-CENTRAL,Division - DIVISION III,Range - RANGE-IV (Jurisdictional Office)",
+            "einvoiceStatus": "Yes",
+            "lstupdt": "",
+            "adadr": [],
+            "ctjCd": "",
+            "errorMsg": null,
+            "stjCd": ""
+          }
+        },
+        "company_record": null,
+        "state_code": "27",
+        "pan": "AAFCN5072P"
+      },
+      "error": null
+    },
+    {
+      "gstin": "27AAACH2702H2ZZ",
+      "status": "degraded",
+      "source": "live_api",
+      "data": {
+        "gstin_lookup": {
+          "legal_name": "HDFC BANK LIMITED",
+          "registration_status": "Active",
+          "taxpayer_type": "Regular",
+          "address": {
+            "flno": "",
+            "lg": "",
+            "loc": "Mumbai",
+            "pncd": "400042",
+            "bnm": "Kanjur Station Road",
+            "city": "",
+            "lt": "",
+            "stcd": "Maharashtra",
+            "bno": "0",
+            "dst": "Mumbai Suburban",
+            "st": "NEAR STATION ROAD"
+          },
+          "raw": {
+            "ntcrbs": "TRD:TWD",
+            "adhrVFlag": "Yes",
+            "lgnm": "HDFC BANK LIMITED",
+            "stj": "State - Maharashtra,Zone - MUMBAI_NORTH_EAST,Division - MULUND,Charge - BHANDUP-WEST_701",
+            "dty": "Regular",
+            "cxdt": "",
+            "gstin": "27AAACH2702H2ZZ",
+            "nba": ["Wholesale Business", "Others"],
+            "ekycVFlag": "Not Applicable",
+            "cmpRt": "NA",
+            "rgdt": "01/08/2017",
+            "ctb": "Public Limited Company",
+            "pradr": {
+              "adr": "4TH FLOOR, B Building, I-THINK TECHNO CAMPUS, Kanjur Station Road, NEAR STATION ROAD, Mumbai, Mumbai Suburban, Maharashtra, 400042",
+              "addr": {
+                "flno": "",
+                "lg": "",
+                "loc": "Mumbai",
+                "pncd": "400042",
+                "bnm": "Kanjur Station Road",
+                "city": "",
+                "lt": "",
+                "stcd": "Maharashtra",
+                "bno": "0",
+                "dst": "Mumbai Suburban",
+                "st": "NEAR STATION ROAD"
+              }
+            },
+            "sts": "Active",
+            "tradeNam": "HDFC BANK LIMITED",
+            "isFieldVisitConducted": "No",
+            "adhrVdt": "03/09/2026",
+            "ctj": "State - CBIC,Zone - MUMBAI,Commissionerate - NAVI MUMBAI,Division - DIVISION II,Range - RANGE-III (Jurisdictional Office)",
+            "einvoiceStatus": "Yes",
+            "lstupdt": "",
+            "adadr": [],
+            "ctjCd": "",
+            "errorMsg": null,
+            "stjCd": ""
+          }
+        },
+        "company_record": null,
+        "state_code": "27",
+        "pan": "AAACH2702H"
+      },
+      "error": null
+    },
+    {
+      "gstin": "27AAACT2727Q1ZW",
+      "status": "degraded",
+      "source": "live_api",
+      "data": {
+        "gstin_lookup": {
+          "legal_name": "TATA MOTORS PASSENGER VEHICLES LIMITED",
+          "registration_status": "Active",
+          "taxpayer_type": "Regular",
+          "address": {
+            "flno": "",
+            "lg": "",
+            "loc": "Pimpri Chinchwad",
+            "pncd": "411062",
+            "bnm": "Chikhali Road",
+            "city": "",
+            "lt": "",
+            "stcd": "Maharashtra",
+            "bno": "0",
+            "dst": "Pune",
+            "st": "Chikhali"
+          },
+          "raw": {
+            "ntcrbs": "MFT",
+            "adhrVFlag": "No",
+            "lgnm": "TATA MOTORS PASSENGER VEHICLES LIMITED",
+            "stj": "State - Maharashtra,Zone - PUNE_SOUTH_WEST,Division - PUNE_NORTH_WEST,Charge - PUNE CANTT_508",
+            "dty": "Regular",
+            "cxdt": "",
+            "gstin": "27AAACT2727Q1ZW",
+            "nba": [
+              "Factory / Manufacturing",
+              "Input Service Distributor (ISD)",
+              "Office / Sale Office",
+              "Retail Business",
+              "Service Provision",
+              "Recipient of Goods or Services",
+              "Works Contract",
+              "Wholesale Business",
+              "Warehouse / Depot",
+              "Bonded Warehouse",
+              "Others",
+              "Export",
+              "Import",
+              "Supplier of Services",
+              "Leasing Business"
+            ],
+            "ekycVFlag": "No",
+            "cmpRt": "NA",
+            "rgdt": "01/07/2017",
+            "ctb": "Public Limited Company",
+            "pradr": {
+              "adr": "Sector No. 15 and 15A PCNTDA, K Block, Chikhali Road, Chikhali, Pimpri Chinchwad, Pune, Maharashtra, 411062",
+              "addr": {
+                "flno": "",
+                "lg": "",
+                "loc": "Pimpri Chinchwad",
+                "pncd": "411062",
+                "bnm": "Chikhali Road",
+                "city": "",
+                "lt": "",
+                "stcd": "Maharashtra",
+                "bno": "0",
+                "dst": "Pune",
+                "st": "Chikhali"
+              }
+            },
+            "sts": "Active",
+            "tradeNam": "TATA MOTORS PASSENGER VEHICLES LIMITED",
+            "isFieldVisitConducted": "No",
+            "ctj": "State - CBIC,Zone - PUNE,Commissionerate - PUNE - I,Division - DIVISION-I TALEGAON,Range - RANGE-V (Jurisdictional Office)",
+            "einvoiceStatus": "Yes",
+            "lstupdt": "",
+            "adadr": [],
+            "ctjCd": "",
+            "errorMsg": null,
+            "stjCd": ""
+          }
+        },
+        "company_record": null,
+        "state_code": "27",
+        "pan": "AAACT2727Q"
+      },
+      "error": null
+    }
+  ]
+}
+</file>
+
+<file path="frontend/index.html">
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Supplier Verification Registry</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --bg: #faf9f6;
+        --surface: #ffffff;
+        --hairline: #e5e2db;
+        --text: #1a1d1f;
+        --text-secondary: #6b7280;
+        --accent: #1f6e4c;
+        --accent-hover: #195a3e;
+        --risk: #b3402f;
+        --review: #b8860b;
+      }
+
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+
+      html {
+        scroll-behavior: smooth;
+      }
+
+      body {
+        background: var(--bg);
+        color: var(--text);
+        font-family:
+          "Inter",
+          -apple-system,
+          sans-serif;
+        font-size: 16px;
+        line-height: 1.5;
+        -webkit-font-smoothing: antialiased;
+      }
+
+      h1,
+      h2,
+      h3,
+      .display {
+        font-family: "Fraunces", Georgia, serif;
+        font-weight: 600;
+        letter-spacing: -0.01em;
+        line-height: 1.15;
+      }
+
+      .mono {
+        font-family: "IBM Plex Mono", monospace;
+      }
+
+      a {
+        color: inherit;
+        text-decoration: none;
+      }
+
+      button {
+        font-family: "Inter", sans-serif;
+        cursor: pointer;
+        border: none;
+      }
+
+      input {
+        font-family: "Inter", sans-serif;
+        font-size: 15px;
+      }
+
+      ::selection {
+        background: var(--accent);
+        color: white;
+      }
+
+      :focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: 2px;
+      }
+
+      /* ---------- Shell ---------- */
+
+      .shell {
+        max-width: 1180px;
+        margin: 0 auto;
+        padding: 0 64px;
+      }
+
+      @media (max-width: 720px) {
+        .shell {
+          padding: 0 24px;
+        }
+      }
+
+      nav.topnav {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 28px 0;
+        border-bottom: 1px solid var(--hairline);
+      }
+
+      .brand {
+        display: flex;
+        align-items: baseline;
+        gap: 10px;
+      }
+
+      .brand-mark {
+        font-family: "Fraunces", serif;
+        font-weight: 700;
+        font-size: 20px;
+      }
+
+      .brand-sub {
+        font-size: 12px;
+        color: var(--text-secondary);
+        font-family: "IBM Plex Mono", monospace;
+      }
+
+      .navlinks {
+        display: flex;
+        align-items: center;
+        gap: 28px;
+        font-size: 14px;
+        color: var(--text-secondary);
+      }
+
+      .navlinks a:hover {
+        color: var(--text);
+      }
+
+      .navlinks .cta-nav {
+        background: var(--accent);
+        color: white;
+        padding: 9px 18px;
+        border-radius: 4px;
+        font-weight: 500;
+      }
+
+      .navlinks .cta-nav:hover {
+        background: var(--accent-hover);
+      }
+
+      .user-chip {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        font-size: 14px;
+      }
+
+      .user-chip button {
+        background: transparent;
+        border: 1px solid var(--hairline);
+        padding: 8px 14px;
+        border-radius: 4px;
+        color: var(--text-secondary);
+        font-size: 13px;
+      }
+
+      .user-chip button:hover {
+        border-color: var(--text-secondary);
+        color: var(--text);
+      }
+
+      /* ---------- Landing ---------- */
+
+      .hero {
+        padding: 96px 0 72px;
+        max-width: 720px;
+      }
+
+      .hero h1 {
+        font-size: 52px;
+        margin-bottom: 24px;
+      }
+
+      .hero p.lede {
+        font-size: 19px;
+        color: var(--text-secondary);
+        max-width: 560px;
+        margin-bottom: 36px;
+      }
+
+      .hero-actions {
+        display: flex;
+        align-items: center;
+        gap: 24px;
+      }
+
+      .btn-primary {
+        background: var(--accent);
+        color: white;
+        padding: 14px 26px;
+        border-radius: 4px;
+        font-size: 15px;
+        font-weight: 500;
+      }
+      .network-legend {
+        display: flex;
+        gap: 18px;
+        margin-bottom: 16px;
+        font-size: 13px;
+        color: var(--text-secondary);
+      }
+      .network-legend .dot {
+        display: inline-block;
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        margin-right: 6px;
+      }
+      #network-svg {
+        border: 1px solid var(--hairline);
+        border-radius: 6px;
+        background: var(--surface);
+      }
+      .node-label {
+        font-family: "Inter", sans-serif;
+        font-size: 11px;
+        fill: var(--text);
+        pointer-events: none;
+      }
+      .edge-line {
+        stroke: var(--risk);
+        stroke-width: 1.5;
+        opacity: 0.5;
+      }
+
+      .btn-primary:hover {
+        background: var(--accent-hover);
+      }
+
+      .btn-ghost {
+        color: var(--text-secondary);
+        font-size: 15px;
+        border-bottom: 1px solid var(--hairline);
+        padding-bottom: 2px;
+      }
+
+      .btn-ghost:hover {
+        color: var(--text);
+        border-color: var(--text);
+      }
+
+      .proof-strip {
+        display: flex;
+        gap: 56px;
+        padding: 48px 0;
+        border-top: 1px solid var(--hairline);
+        border-bottom: 1px solid var(--hairline);
+        margin-bottom: 80px;
+      }
+
+      .proof-item .num {
+        font-family: "Fraunces", serif;
+        font-size: 34px;
+        font-weight: 600;
+        color: var(--accent);
+      }
+
+      .proof-item .label {
+        font-size: 13px;
+        color: var(--text-secondary);
+        margin-top: 4px;
+      }
+
+      .section-title {
+        font-size: 26px;
+        margin-bottom: 12px;
+      }
+
+      .section-sub {
+        color: var(--text-secondary);
+        font-size: 15px;
+        max-width: 520px;
+        margin-bottom: 40px;
+      }
+
+      .how-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 1px;
+        background: var(--hairline);
+        border: 1px solid var(--hairline);
+        margin-bottom: 96px;
+      }
+
+      @media (max-width: 720px) {
+        .how-grid {
+          grid-template-columns: 1fr;
+        }
+      }
+
+      .how-cell {
+        background: var(--surface);
+        padding: 32px;
+      }
+
+      .how-cell h3 {
+        font-size: 17px;
+        margin-bottom: 10px;
+      }
+
+      .how-cell p {
+        font-size: 14px;
+        color: var(--text-secondary);
+        line-height: 1.55;
+      }
+
+      footer {
+        border-top: 1px solid var(--hairline);
+        padding: 32px 0 64px;
+        color: var(--text-secondary);
+        font-size: 13px;
+        display: flex;
+        justify-content: space-between;
+      }
+
+      /* ---------- Auth pages ---------- */
+
+      .auth-wrap {
+        max-width: 400px;
+        margin: 88px auto;
+        padding: 0 24px;
+      }
+
+      .auth-wrap h1 {
+        font-size: 30px;
+        margin-bottom: 8px;
+      }
+
+      .auth-wrap .sub {
+        color: var(--text-secondary);
+        font-size: 14px;
+        margin-bottom: 36px;
+      }
+
+      .field {
+        margin-bottom: 18px;
+      }
+
+      .field label {
+        display: block;
+        font-size: 13px;
+        color: var(--text-secondary);
+        margin-bottom: 7px;
+      }
+
+      .field input {
+        width: 100%;
+        padding: 11px 13px;
+        background: var(--surface);
+        border: 1px solid var(--hairline);
+        border-radius: 4px;
+        color: var(--text);
+      }
+
+      .field input:focus {
+        border-color: var(--accent);
+      }
+
+      .form-submit {
+        width: 100%;
+        background: var(--accent);
+        color: white;
+        padding: 12px;
+        border-radius: 4px;
+        font-size: 15px;
+        font-weight: 500;
+        margin-top: 8px;
+      }
+
+      .form-submit:hover {
+        background: var(--accent-hover);
+      }
+
+      .form-submit:disabled {
+        background: var(--hairline);
+        color: var(--text-secondary);
+        cursor: not-allowed;
+      }
+
+      .form-footer {
+        margin-top: 24px;
+        font-size: 14px;
+        color: var(--text-secondary);
+      }
+
+      .form-footer a {
+        color: var(--accent);
+      }
+
+      .msg {
+        font-size: 13px;
+        padding: 11px 13px;
+        border-radius: 4px;
+        margin-bottom: 18px;
+      }
+
+      .msg.error {
+        background: #fbeeec;
+        color: var(--risk);
+        border: 1px solid #f0d5d0;
+      }
+      .msg.success {
+        background: #ebf3ef;
+        color: var(--accent);
+        border: 1px solid #d3e5db;
+      }
+
+      /* ---------- Verify page ---------- */
+
+      .verify-wrap {
+        max-width: 720px;
+        margin: 0 auto;
+        padding: 64px 24px 96px;
+      }
+
+      .verify-wrap h1 {
+        font-size: 32px;
+        margin-bottom: 8px;
+      }
+      .verify-wrap .sub {
+        color: var(--text-secondary);
+        font-size: 15px;
+        margin-bottom: 40px;
+      }
+
+      .gstin-form {
+        display: flex;
+        gap: 12px;
+        margin-bottom: 12px;
+      }
+
+      .gstin-form input {
+        flex: 1;
+        padding: 14px 16px;
+        border: 1px solid var(--hairline);
+        border-radius: 4px;
+        background: var(--surface);
+        font-family: "IBM Plex Mono", monospace;
+        font-size: 15px;
+        letter-spacing: 0.02em;
+        text-transform: uppercase;
+      }
+
+      .gstin-form input:focus {
+        border-color: var(--accent);
+      }
+
+      .gstin-form button {
+        background: var(--accent);
+        color: white;
+        padding: 0 28px;
+        border-radius: 4px;
+        font-size: 15px;
+        font-weight: 500;
+        white-space: nowrap;
+      }
+
+      .gstin-form button:hover {
+        background: var(--accent-hover);
+      }
+      .gstin-form button:disabled {
+        background: var(--hairline);
+        color: var(--text-secondary);
+        cursor: not-allowed;
+      }
+
+      .hint {
+        font-size: 13px;
+        color: var(--text-secondary);
+        margin-bottom: 48px;
+      }
+
+      .hint button {
+        background: none;
+        color: var(--accent);
+        font-size: 13px;
+        text-decoration: underline;
+        padding: 0;
+      }
+
+      .trace {
+        border: 1px solid var(--hairline);
+        border-radius: 4px;
+        background: var(--surface);
+        padding: 24px 26px;
+        margin-bottom: 32px;
+        display: none;
+      }
+
+      .trace.active {
+        display: block;
+      }
+
+      .trace-line {
+        display: flex;
+        align-items: baseline;
+        gap: 10px;
+        font-family: "IBM Plex Mono", monospace;
+        font-size: 13px;
+        color: var(--text-secondary);
+        padding: 6px 0;
+        opacity: 0;
+        transform: translateY(4px);
+        transition:
+          opacity 0.3s ease,
+          transform 0.3s ease;
+      }
+
+      .trace-line.shown {
+        opacity: 1;
+        transform: translateY(0);
+      }
+      .trace-line.done {
+        color: var(--text);
+      }
+      .trace-line .check {
+        color: var(--accent);
+      }
+
+      .result-card {
+        border: 1px solid var(--hairline);
+        border-radius: 4px;
+        background: var(--surface);
+        overflow: hidden;
+        display: none;
+      }
+
+      .result-card.active {
+        display: block;
+      }
+
+      .result-hero {
+        padding: 40px 32px;
+        border-bottom: 1px solid var(--hairline);
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+      }
+
+      .result-status-label {
+        font-size: 13px;
+        color: var(--text-secondary);
+        margin-bottom: 8px;
+      }
+
+      .result-legal-name {
+        font-family: "Fraunces", serif;
+        font-size: 26px;
+        font-weight: 600;
+      }
+
+      .status-badge {
+        font-family: "IBM Plex Mono", monospace;
+        font-size: 12px;
+        padding: 7px 14px;
+        border-radius: 20px;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+      }
+
+      .status-badge.ok {
+        background: #ebf3ef;
+        color: var(--accent);
+      }
+      .status-badge.degraded {
+        background: #fbf4e4;
+        color: var(--review);
+      }
+      .status-badge.failed {
+        background: #fbeeec;
+        color: var(--risk);
+      }
+
+      .result-details {
+        padding: 28px 32px;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 20px 32px;
+      }
+
+      .detail-row .k {
+        font-size: 12px;
+        color: var(--text-secondary);
+        margin-bottom: 5px;
+      }
+
+      .detail-row .v {
+        font-size: 14px;
+      }
+
+      .detail-row .v.mono {
+        font-family: "IBM Plex Mono", monospace;
+      }
+
+      .result-source {
+        padding: 16px 32px;
+        background: var(--bg);
+        font-size: 12px;
+        color: var(--text-secondary);
+        border-top: 1px solid var(--hairline);
+      }
+
+      .error-box {
+        border: 1px solid #f0d5d0;
+        background: #fbeeec;
+        color: var(--risk);
+        padding: 16px 20px;
+        border-radius: 4px;
+        font-size: 14px;
+        margin-bottom: 24px;
+        display: none;
+      }
+
+      .error-box.active {
+        display: block;
+      }
+
+      .gate {
+        max-width: 480px;
+        margin: 88px auto;
+        padding: 0 24px;
+        text-align: left;
+      }
+
+      .gate h2 {
+        font-size: 24px;
+        margin-bottom: 10px;
+      }
+      .gate p {
+        color: var(--text-secondary);
+        font-size: 14px;
+        margin-bottom: 24px;
+      }
+
+      /* ---------- App pages (dashboard / history / report) ---------- */
+
+      .page {
+        padding-top: 56px;
+        padding-bottom: 96px;
+      }
+
+      .page-head {
+        display: flex;
+        align-items: flex-end;
+        justify-content: space-between;
+        gap: 24px;
+        margin-bottom: 32px;
+      }
+
+      .page-head h1 {
+        font-size: 32px;
+        margin-bottom: 6px;
+      }
+      .page-head .sub {
+        color: var(--text-secondary);
+        font-size: 15px;
+      }
+      .page-head .head-actions {
+        display: flex;
+        align-items: center;
+        gap: 20px;
+      }
+
+      button.btn-ghost {
+        background: none;
+        font-family: "Inter", sans-serif;
+      }
+      button.btn-primary {
+        font-family: "Inter", sans-serif;
+      }
+      button.btn-primary:disabled {
+        background: var(--hairline);
+        color: var(--text-secondary);
+        cursor: not-allowed;
+      }
+
+      .summary-strip {
+        display: flex;
+        gap: 56px;
+        padding: 28px 0;
+        border-top: 1px solid var(--hairline);
+        border-bottom: 1px solid var(--hairline);
+        margin-bottom: 32px;
+      }
+      .summary-strip .proof-item .num {
+        font-size: 30px;
+        color: var(--text);
+      }
+      .proof-item .num.v-verified {
+        color: var(--accent);
+      }
+      .proof-item .num.v-review {
+        color: var(--review);
+      }
+      .proof-item .num.v-risk {
+        color: var(--risk);
+      }
+
+      .table-scroll {
+        overflow-x: auto;
+      }
+      .tbl {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 14px;
+      }
+      .tbl th {
+        text-align: left;
+        font-weight: 500;
+        font-size: 12px;
+        color: var(--text-secondary);
+        padding: 10px 14px 10px 0;
+        border-bottom: 1px solid var(--hairline);
+        white-space: nowrap;
+      }
+      .tbl td {
+        padding: 16px 14px 16px 0;
+        border-bottom: 1px solid var(--hairline);
+        vertical-align: middle;
+      }
+      .tbl tr.row-link {
+        cursor: pointer;
+      }
+      .tbl tr.row-link:hover td {
+        background: var(--surface);
+      }
+      .tbl .cell-name {
+        font-weight: 500;
+      }
+      .tbl .cell-sub {
+        font-family: "IBM Plex Mono", monospace;
+        font-size: 12px;
+        color: var(--text-secondary);
+        margin-top: 3px;
+      }
+      .tbl .num-cell {
+        font-family: "IBM Plex Mono", monospace;
+      }
+      .tbl .muted {
+        color: var(--text-secondary);
+      }
+
+      .verdict {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 13px;
+        font-weight: 500;
+        white-space: nowrap;
+      }
+      .verdict .dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: currentColor;
+        display: inline-block;
+      }
+      .v-verified {
+        color: var(--accent);
+      }
+      .v-review {
+        color: var(--review);
+      }
+      .v-risk,
+      .v-reject {
+        color: var(--risk);
+      }
+      .v-none {
+        color: var(--text-secondary);
+      }
+
+      .tag {
+        font-family: "IBM Plex Mono", monospace;
+        font-size: 11px;
+        padding: 2px 8px;
+        border: 1px solid var(--hairline);
+        border-radius: 10px;
+        color: var(--text-secondary);
+        white-space: nowrap;
+      }
+      .tag.crafted {
+        color: var(--review);
+        border-color: #ebddb5;
+      }
+
+      .empty-state {
+        padding: 56px 0;
+        max-width: 520px;
+      }
+      .empty-state h2 {
+        font-size: 24px;
+        margin-bottom: 10px;
+      }
+      .empty-state p {
+        color: var(--text-secondary);
+        font-size: 15px;
+        margin-bottom: 28px;
+      }
+      .loading {
+        color: var(--text-secondary);
+        font-size: 14px;
+        padding: 32px 0;
+      }
+
+      .filter-row {
+        display: flex;
+        gap: 12px;
+        margin-bottom: 20px;
+      }
+      .filter-row input {
+        flex: 1;
+        padding: 11px 14px;
+        border: 1px solid var(--hairline);
+        border-radius: 4px;
+        background: var(--surface);
+        font-size: 14px;
+      }
+      .filter-row input:focus {
+        border-color: var(--accent);
+        outline: none;
+      }
+
+      .back-link {
+        display: inline-block;
+        font-size: 13px;
+        color: var(--text-secondary);
+        margin-bottom: 24px;
+      }
+      .back-link:hover {
+        color: var(--text);
+      }
+
+      .navlinks a.active {
+        color: var(--text);
+        font-weight: 500;
+      }
+
+      /* ---------- Report / result card additions ---------- */
+
+      .gstin-line {
+        font-size: 13px;
+        color: var(--text-secondary);
+        margin-top: 8px;
+      }
+
+      .score-block {
+        text-align: right;
+      }
+      .score-num {
+        font-size: 56px;
+        font-weight: 500;
+        line-height: 1;
+      }
+      .score-of {
+        font-size: 12px;
+        color: var(--text-secondary);
+        margin: 6px 0 12px;
+      }
+      .score-block.v-verified .score-num {
+        color: var(--accent);
+      }
+      .score-block.v-review .score-num {
+        color: var(--review);
+      }
+      .score-block.v-risk .score-num,
+      .score-block.v-reject .score-num {
+        color: var(--risk);
+      }
+      .score-block.v-none .score-num {
+        color: var(--text-secondary);
+      }
+
+      .section-block {
+        padding: 24px 32px;
+        border-top: 1px solid var(--hairline);
+      }
+      .section-label {
+        font-size: 12px;
+        color: var(--text-secondary);
+        margin-bottom: 14px;
+      }
+
+      .findings {
+        list-style: none;
+      }
+      .finding {
+        display: flex;
+        gap: 12px;
+        padding: 10px 0;
+        align-items: flex-start;
+      }
+      .finding .dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        margin-top: 7px;
+        flex: none;
+        background: var(--text-secondary);
+      }
+      .finding.sev-info .dot {
+        background: var(--accent);
+      }
+      .finding.sev-review .dot {
+        background: var(--review);
+      }
+      .finding.sev-risk .dot,
+      .finding.sev-reject .dot {
+        background: var(--risk);
+      }
+      .finding .f-msg {
+        font-size: 14px;
+      }
+      .finding.sev-info .f-msg {
+        color: var(--text-secondary);
+      }
+      .finding .f-code {
+        font-family: "IBM Plex Mono", monospace;
+        font-size: 11px;
+        color: var(--text-secondary);
+        margin-top: 3px;
+      }
+
+      .trace-line .check.bad {
+        color: var(--risk);
+      }
+      .trace-line .t-agent {
+        min-width: 84px;
+        color: var(--text-secondary);
+      }
+      .trace-line .t-msg {
+        flex: 1;
+      }
+      .trace-line .t-ms {
+        color: var(--text-secondary);
+        font-size: 12px;
+        white-space: nowrap;
+      }
+      .trace-pending {
+        font-family: "IBM Plex Mono", monospace;
+        font-size: 13px;
+        color: var(--text-secondary);
+        animation: pulse 1.1s ease-in-out infinite;
+      }
+      .trace-note {
+        font-size: 11px;
+        color: var(--text-secondary);
+        margin-top: 14px;
+      }
+      @keyframes pulse {
+        0%,
+        100% {
+          opacity: 0.45;
+        }
+        50% {
+          opacity: 1;
+        }
+      }
+
+      details.optional {
+        margin-bottom: 40px;
+      }
+      details.optional summary {
+        cursor: pointer;
+        font-size: 13px;
+        color: var(--accent);
+        margin-bottom: 14px;
+      }
+      details.optional .field {
+        max-width: none;
+      }
+
+      .result-source a {
+        color: var(--accent);
+        text-decoration: underline;
+      }
+
+      @media (max-width: 720px) {
+        .page-head {
+          flex-direction: column;
+          align-items: flex-start;
+        }
+        .result-hero {
+          flex-direction: column;
+          align-items: flex-start;
+          gap: 24px;
+        }
+        .score-block {
+          text-align: left;
+        }
+        .summary-strip {
+          gap: 28px;
+          flex-wrap: wrap;
+        }
+      }
+
+      [data-page] {
+        display: none;
+      }
+      [data-page].active {
+        display: block;
+      }
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
+  </head>
+  <body>
+    <div class="shell">
+      <nav class="topnav">
+        <a href="#/" class="brand">
+          <span class="brand-mark">Registry</span>
+          <span class="brand-sub">GSTIN verification</span>
+        </a>
+        <div class="navlinks" id="navlinks"></div>
+      </nav>
+    </div>
+
+    <!-- LANDING -->
+    <div data-page="/" class="shell">
+      <section class="hero">
+        <h1>Know who you're paying before the money leaves.</h1>
+        <p class="lede">
+          Every new supplier's GSTIN, checked against live government records in
+          under a second — not 45 seconds and a captcha at the GST portal.
+        </p>
+        <div class="hero-actions">
+          <a href="#/verify" class="btn-primary">Verify a GSTIN</a>
+          <a href="#/signup" class="btn-ghost">Create an account</a>
+        </div>
+      </section>
+
+      <div class="proof-strip">
+        <div class="proof-item">
+          <div class="num mono" id="stat-checks">—</div>
+          <div class="label">verifications run</div>
+        </div>
+        <div class="proof-item">
+          <div class="num mono">&lt;1s</div>
+          <div class="label">per check, vs. 45s manually</div>
+        </div>
+        <div class="proof-item">
+          <div class="num mono">₹0.04</div>
+          <div class="label">cost per verification</div>
+        </div>
+      </div>
+
+      <section>
+        <h2 class="section-title">How it works</h2>
+        <p class="section-sub">
+          Three steps, all against real data sources — not a cached demo.
+        </p>
+        <div class="how-grid">
+          <div class="how-cell">
+            <h3>1. Enter a GSTIN</h3>
+            <p>
+              Offline format check runs first — a malformed number never reaches
+              an external API.
+            </p>
+          </div>
+          <div class="how-cell">
+            <h3>2. Live lookup</h3>
+            <p>
+              Cross-referenced against gstincheck.co.in and data.gov.in's
+              Company Master Data, the same sources the government registry
+              itself uses.
+            </p>
+          </div>
+          <div class="how-cell">
+            <h3>3. Saved, not forgotten</h3>
+            <p>
+              Every check is scored, explained, and logged to your account, so
+              you can look back at what you verified and when.
+            </p>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <!-- LOGIN -->
+    <div data-page="/login" class="auth-wrap">
+      <h1>Log in</h1>
+      <p class="sub">Access your saved suppliers and verification history.</p>
+      <div class="msg error" id="login-error" style="display: none"></div>
+      <form id="login-form">
+        <div class="field">
+          <label for="login-email">Email</label>
+          <input type="email" id="login-email" required autocomplete="email" />
+        </div>
+        <div class="field">
+          <label for="login-password">Password</label>
+          <input
+            type="password"
+            id="login-password"
+            required
+            autocomplete="current-password"
+          />
+        </div>
+        <button type="submit" class="form-submit" id="login-submit">
+          Log in
+        </button>
+      </form>
+      <div class="form-footer">
+        No account yet? <a href="#/signup">Sign up</a>
+      </div>
+    </div>
+
+    <!-- SIGNUP -->
+    <div data-page="/signup" class="auth-wrap">
+      <h1>Create an account</h1>
+      <p class="sub">Start verifying suppliers in under a minute.</p>
+      <div class="msg error" id="signup-error" style="display: none"></div>
+      <div class="msg success" id="signup-success" style="display: none"></div>
+
+      <form id="signup-form">
+        <div class="field">
+          <label for="signup-email">Email</label>
+          <input type="email" id="signup-email" required autocomplete="email" />
+        </div>
+        <div class="field">
+          <label for="signup-password">Password</label>
+          <input
+            type="password"
+            id="signup-password"
+            required
+            autocomplete="new-password"
+            minlength="8"
+          />
+        </div>
+        <button type="submit" class="form-submit" id="signup-submit">
+          Sign up
+        </button>
+      </form>
+
+      <form id="confirm-form" style="display: none; margin-top: 28px">
+        <div class="field">
+          <label for="confirm-code">Verification code — check your email</label>
+          <input
+            type="text"
+            id="confirm-code"
+            required
+            maxlength="6"
+            class="mono"
+          />
+        </div>
+        <button type="submit" class="form-submit" id="confirm-submit">
+          Confirm account
+        </button>
+      </form>
+
+      <div class="form-footer">
+        Already have an account? <a href="#/login">Log in</a>
+      </div>
+    </div>
+
+    <!-- AUTH GATE (shown instead of any protected page when logged out) -->
+    <div data-page="/verify-gate" class="gate">
+      <h2>Log in to continue</h2>
+      <p>
+        Suppliers, verifications and reports are saved to your account, so you
+        can find them again later.
+      </p>
+      <a href="#/login" class="btn-primary" style="display: inline-block"
+        >Log in</a
+      >
+    </div>
+
+    <!-- DASHBOARD -->
+    <div data-page="/dashboard" class="shell page">
+      <div class="page-head">
+        <div>
+          <h1>Suppliers</h1>
+          <p class="sub">
+            Every supplier you've verified, with its current trust verdict.
+          </p>
+        </div>
+        <div class="head-actions">
+          <button type="button" class="btn-ghost" data-action="seed">
+            Load demo data
+          </button>
+          <a href="#/verify" class="btn-primary">Verify a supplier</a>
+        </div>
+      </div>
+      <div class="error-box" id="dash-error"></div>
+      <div class="summary-strip" id="dash-summary" style="display: none"></div>
+      <div id="dash-body"></div>
+    </div>
+
+    <!-- HISTORY -->
+    <div data-page="/history" class="shell page">
+      <div class="page-head">
+        <div>
+          <h1>History</h1>
+          <p class="sub">Every verification you've run, newest first.</p>
+        </div>
+        <div class="head-actions">
+          <button type="button" class="btn-ghost" id="history-export">
+            Export CSV
+          </button>
+        </div>
+      </div>
+      <div class="error-box" id="history-error"></div>
+      <div class="filter-row">
+        <input
+          type="text"
+          id="history-filter"
+          placeholder="Filter by GSTIN or supplier name"
+        />
+      </div>
+      <div id="history-body"></div>
+    </div>
+
+    <!-- FRAUD NETWORK -->
+    <div data-page="/fraud-network" class="shell page">
+      <div class="page-head">
+        <div>
+          <h1>Fraud network</h1>
+          <p class="sub">
+            Suppliers linked by a shared bank account or address.
+          </p>
+        </div>
+      </div>
+      <div class="error-box" id="network-error"></div>
+      <div id="network-legend" class="network-legend"></div>
+      <svg id="network-svg" width="100%" height="560"></svg>
+    </div>
+
+    <!-- REPORT (/verify/<id>) -->
+    <div data-page="/report" class="verify-wrap" style="max-width: 760px">
+      <a href="#/history" class="back-link">&larr; All verifications</a>
+      <div class="error-box" id="report-error"></div>
+      <div id="report-body">
+        <div class="loading">Loading report&hellip;</div>
+      </div>
+    </div>
+
+    <!-- VERIFY -->
+    <div data-page="/verify" class="verify-wrap">
+      <h1>Verify a supplier</h1>
+      <p class="sub">
+        Enter a 15-character GSTIN to run a live check. The verification agent
+        looks it up; the risk agent scores it.
+      </p>
+
+      <form class="gstin-form" id="verify-form">
+        <input
+          type="text"
+          id="gstin-input"
+          placeholder="29AAACI4798L1ZU"
+          maxlength="15"
+          required
+        />
+        <button type="submit" id="verify-submit">Verify</button>
+      </form>
+      <div class="hint">
+        Don't have one handy?
+        <button type="button" id="try-sample">Try a real GSTIN</button> or
+        <button type="button" id="try-bad">a tampered one</button>
+      </div>
+
+      <details class="optional">
+        <summary>
+          Optional supplier details &mdash; enables fraud-ring checks
+        </summary>
+        <div class="field">
+          <label for="opt-name">Name the supplier gave you</label>
+          <input type="text" id="opt-name" maxlength="120" autocomplete="off" />
+        </div>
+        <div class="field">
+          <label for="opt-bank"
+            >Bank account number they asked you to pay</label
+          >
+          <input
+            type="text"
+            id="opt-bank"
+            maxlength="24"
+            class="mono"
+            autocomplete="off"
+            inputmode="numeric"
+          />
+        </div>
+        <div class="field">
+          <label for="opt-address">Address they gave you</label>
+          <input
+            type="text"
+            id="opt-address"
+            maxlength="200"
+            autocomplete="off"
+          />
+        </div>
+      </details>
+
+      <div class="error-box" id="verify-error"></div>
+
+      <div class="trace" id="trace">
+        <div class="trace-pending" id="trace-pending">
+          Running verification and risk agents&hellip;
+        </div>
+        <div id="trace-list"></div>
+        <div class="trace-note">
+          Steps recorded by the backend agents during this run, replayed at
+          reading speed.
+        </div>
+      </div>
+
+      <div class="result-card" id="result-card"></div>
+    </div>
+
+    <script>
+      // ---------- Config ----------
+      const API_BASE =
+        "https://oiydqtnctj.execute-api.ap-south-1.amazonaws.com/Prod";
+      const SAMPLE_GSTIN = "29AAACI4798L1ZU";
+      const TAMPERED_GSTIN = "27AAPFU0939F1ZX"; // checksum deliberately wrong - shows the offline REJECT
+
+      // ---------- Session (in-memory + localStorage for token persistence) ----------
+      const session = {
+        get token() {
+          return localStorage.getItem("svr_access_token");
+        },
+        set token(v) {
+          v
+            ? localStorage.setItem("svr_access_token", v)
+            : localStorage.removeItem("svr_access_token");
+        },
+        get email() {
+          return localStorage.getItem("svr_email");
+        },
+        set email(v) {
+          v
+            ? localStorage.setItem("svr_email", v)
+            : localStorage.removeItem("svr_email");
+        },
+        get isLoggedIn() {
+          return !!this.token;
+        },
+        clear() {
+          this.token = null;
+          this.email = null;
+        },
+      };
+
+      let pendingSignupEmail = null;
+
+      // ---------- Helpers ----------
+      const $ = (id) => document.getElementById(id);
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+      const esc = (v) =>
+        String(v ?? "").replace(
+          /[&<>"']/g,
+          (c) =>
+            ({
+              "&": "&amp;",
+              "<": "&lt;",
+              ">": "&gt;",
+              '"': "&quot;",
+              "'": "&#39;",
+            })[c],
+        );
+      const fmtTime = (ts) =>
+        ts
+          ? new Date(ts * 1000).toLocaleString("en-IN", {
+              day: "numeric",
+              month: "short",
+              year: "numeric",
+              hour: "2-digit",
+              minute: "2-digit",
+            })
+          : "—";
+
+      const VERDICTS = {
+        VERIFIED: { label: "Verified", cls: "v-verified" },
+        REVIEW: { label: "Needs review", cls: "v-review" },
+        RISK: { label: "High risk", cls: "v-risk" },
+        REJECT: { label: "Rejected", cls: "v-reject" },
+      };
+      const verdictMeta = (v) =>
+        VERDICTS[v] || { label: "Not scored", cls: "v-none" };
+      const verdictHtml = (v) =>
+        `<span class="verdict ${verdictMeta(v).cls}"><i class="dot"></i>${verdictMeta(v).label}</span>`;
+      const originTag = (o) =>
+        o === "crafted_test_case"
+          ? `<span class="tag crafted">crafted test case</span>`
+          : `<span class="tag">live data</span>`;
+
+      const ERROR_TEXT = {
+        not_found: "That report doesn't exist in your account.",
+        missing_or_invalid_token:
+          "Your session has expired — please log in again.",
+        gstin_required: "Enter a GSTIN first.",
+      };
+
+      // One place for auth header, 401 handling and error messages.
+      async function api(path, { method = "GET", body } = {}) {
+        let res;
+        try {
+          res = await fetch(`${API_BASE}${path}`, {
+            method,
+            headers: {
+              ...(body ? { "Content-Type": "application/json" } : {}),
+              ...(session.token
+                ? { Authorization: `Bearer ${session.token}` }
+                : {}),
+            },
+            body: body ? JSON.stringify(body) : undefined,
+          });
+        } catch (e) {
+          throw new Error(
+            "Couldn't reach the server. Check your connection and try again.",
+          );
+        }
+        if (res.status === 401 && session.token) {
+          session.clear();
+          navigate("/login");
+          throw new Error(ERROR_TEXT.missing_or_invalid_token);
+        }
+        let data = null;
+        try {
+          data = await res.json();
+        } catch (e) {
+          /* non-JSON body */
+        }
+        if (!res.ok) {
+          const code = data && (data.error || data.message);
+          throw new Error(
+            ERROR_TEXT[code] ||
+              (code ? String(code) : `Request failed (HTTP ${res.status}).`),
+          );
+        }
+        return data;
+      }
+
+      function showError(id, message) {
+        const el = $(id);
+        el.textContent = message;
+        el.classList.add("active");
+      }
+      function clearError(id) {
+        $(id).classList.remove("active");
+      }
+
+      // ---------- Router ----------
+      const PROTECTED = new Set([
+        "/verify",
+        "/dashboard",
+        "/history",
+        "/report",
+        "/fraud-network",
+      ]);
+      const KNOWN = new Set([
+        "/",
+        "/login",
+        "/signup",
+        "/verify",
+        "/dashboard",
+        "/history",
+        "/report",
+        "/verify-gate",
+        "/fraud-network",
+      ]);
+
+      function currentPath() {
+        return location.hash.replace(/^#/, "") || "/";
+      }
+
+      function navigate(path) {
+        location.hash = path;
+      }
+
+      function resolveRoute() {
+        const raw = currentPath();
+        const m = raw.match(/^\/verify\/([A-Za-z0-9-]+)$/); // /verify/<log_id> = saved report
+        let page = m ? "/report" : raw;
+        const params = m ? { id: m[1] } : {};
+        if (!KNOWN.has(page)) page = "/";
+        if (PROTECTED.has(page) && !session.isLoggedIn) page = "/verify-gate";
+        return { page, params };
+      }
+
+      function renderNav(page) {
+        const nav = $("navlinks");
+        if (session.isLoggedIn) {
+          const a = (p) => (page === p ? "active" : "");
+          nav.innerHTML = `
+        <a href="#/dashboard" class="${a("/dashboard")}">Dashboard</a>
+        <a href="#/verify" class="${a("/verify")}">Verify</a>
+        <a href="#/history" class="${a("/history")}">History</a>
+        <a href="#/fraud-network" class="${a("/fraud-network")}">Network</a>
+        <div class="user-chip">
+          <span class="mono" style="color: var(--text-secondary);">${esc(session.email)}</span>
+          <button id="logout-btn">Log out</button>
+        </div>`;
+          $("logout-btn").addEventListener("click", () => {
+            session.clear();
+            navigate("/login");
+            render();
+          });
+        } else {
+          nav.innerHTML = `
+        <a href="#/login">Log in</a>
+        <a href="#/signup" class="cta-nav">Sign up</a>`;
+        }
+      }
+
+      const LOADERS = {
+        "/": () => loadStats(),
+        "/dashboard": () => loadDashboard(),
+        "/history": () => loadHistory(),
+        "/report": (params) => loadReport(params.id),
+        "/fraud-network": () => loadFraudNetwork(),
+      };
+
+      function render() {
+        const { page, params } = resolveRoute();
+        document.querySelectorAll("[data-page]").forEach((el) => {
+          el.classList.toggle("active", el.getAttribute("data-page") === page);
+        });
+        renderNav(page);
+        window.scrollTo(0, 0);
+        if (LOADERS[page]) LOADERS[page](params);
+      }
+
+      window.addEventListener("hashchange", render);
+
+      // ---------- Landing stat: real, shared counter from DynamoDB ----------
+      async function loadStats() {
+        try {
+          const res = await fetch(`${API_BASE}/stats`);
+          const json = await res.json();
+          $("stat-checks").textContent = Number(
+            json.data.total_checks,
+          ).toLocaleString("en-IN");
+        } catch (e) {
+          $("stat-checks").textContent = "—";
+        }
+      }
+
+      // ---------- Shared: report / result card ----------
+      function renderReport(
+        r,
+        { animate = false, permalinkId = null, showTrace = false } = {},
+      ) {
+        const lookup =
+          (r.result && r.result.data && r.result.data.gstin_lookup) || {};
+        const raw = lookup.raw || {};
+        const addr = lookup.address || {};
+        const addrLine = [
+          addr.bnm,
+          addr.st,
+          addr.loc,
+          addr.dst,
+          addr.stcd,
+          addr.pncd,
+        ]
+          .filter(Boolean)
+          .join(", ");
+        const meta = verdictMeta(r.verdict);
+        const hasScore = r.trust_score !== null && r.trust_score !== undefined;
+        const name =
+          r.name ||
+          (r.verdict === "REJECT"
+            ? "Invalid GSTIN"
+            : "No registry record found");
+
+        const order = { reject: 0, risk: 1, review: 2, info: 3 };
+        const findings = (r.findings || [])
+          .slice()
+          .sort((a, b) => order[a.severity] - order[b.severity]);
+        const findingsHtml = findings.length
+          ? `<ul class="findings">${findings
+              .map(
+                (f) => `
+          <li class="finding sev-${esc(f.severity)}">
+            <i class="dot"></i>
+            <div>
+              <div class="f-msg">${esc(f.message)}</div>
+              <div class="f-code">${esc(f.code)}${f.penalty ? ` &middot; &minus;${esc(f.penalty)} pts` : ""}</div>
+            </div>
+          </li>`,
+              )
+              .join("")}</ul>`
+          : `<div class="f-msg" style="color: var(--text-secondary); font-size: 14px;">No risk analysis was recorded for this check.</div>`;
+        
+        const summaryHtml = r.summary
+  ? `<div class="section-block"><div class="section-label">Summary ${r.summary_source === "bedrock" ? "(AI-generated)" : "(template)"}</div>
+     <p style="font-size:14px; color:var(--text-secondary);">${esc(r.summary)}</p></div>` : "";
+        
+
+
+        const traceHtml =
+          showTrace && r.trace && r.trace.length
+            ? `<div class="section-block">
+           <div class="section-label">Agent trace</div>
+           ${r.trace.map(traceLineHtml).join("")}
+         </div>`
+            : "";
+
+        const detailRows =
+          [
+            ["GSTIN", `<span class="mono">${esc(r.gstin)}</span>`],
+            ["GST registration status", esc(lookup.registration_status || "—")],
+            ["Taxpayer type", esc(lookup.taxpayer_type || "—")],
+            ["Registered on (GST)", esc(raw.rgdt || "—")],
+            ["State", esc(addr.stcd || "—")],
+            ["Constitution", esc(raw.ctb || "—")],
+          ]
+            .map(
+              ([k, v]) =>
+                `<div class="detail-row"><div class="k">${k}</div><div class="v">${v}</div></div>`,
+            )
+            .join("") +
+          `<div class="detail-row" style="grid-column: 1 / -1;"><div class="k">Address</div><div class="v">${esc(addrLine || "—")}</div></div>`;
+
+        const originLabel =
+          r.data_origin === "crafted_test_case"
+            ? "crafted test case"
+            : "live data";
+        const sourceLine =
+          r.error && r.verdict !== "REJECT"
+            ? `Error: ${esc(r.error)}`
+            : `Source: ${esc(r.source || "unknown")} &middot; ${originLabel}${r.timestamp ? " &middot; " + esc(fmtTime(r.timestamp)) : ""}`;
+
+        return `
+      <div class="result-hero">
+        <div>
+          <div class="result-status-label">${r.data_origin === "crafted_test_case" ? "Crafted test case" : "Supplier"}</div>
+          <div class="result-legal-name">${esc(name)}</div>
+          <div class="mono gstin-line">${esc(r.gstin)}</div>
+        </div>
+        <div class="score-block ${meta.cls}">
+          <div class="score-num mono" id="score-num" data-target="${hasScore ? r.trust_score : ""}">${hasScore ? (animate ? 0 : r.trust_score) : "—"}</div>
+          <div class="score-of">/ 100 trust score</div>
+          ${verdictHtml(r.verdict)}
+        </div>
+      </div>
+      <div class="section-block" style="border-top: none;">
+        <div class="section-label">Findings</div>
+        ${findingsHtml}
+      </div>
+      ${summaryHtml}
+      ${traceHtml}
+      <div class="result-details" style="border-top: 1px solid var(--hairline);">${detailRows}</div>
+      <div class="result-source">${sourceLine}${permalinkId ? ` &middot; <a href="#/verify/${esc(permalinkId)}">Open saved report</a>` : ""}</div>`;
+      }
+
+      async function loadFraudNetwork() {
+        const err = $("network-error");
+        err.classList.remove("active");
+        const svg = d3.select("#network-svg");
+        svg.selectAll("*").remove();
+        try {
+          const res = await api("/fraud-network");
+          const { nodes, edges } = res.data;
+          const width =
+              document.getElementById("network-svg").clientWidth || 900,
+            height = 560;
+          const colorFor = (v) =>
+            v === "VERIFIED"
+              ? "#1F6E4C"
+              : v === "REVIEW"
+                ? "#B8860B"
+                : v === "RISK" || v === "REJECT"
+                  ? "#B3402F"
+                  : "#9CA3AF";
+
+          const linkNodes = edges.map((e) => ({ ...e }));
+          const sim = d3
+            .forceSimulation(nodes)
+            .force(
+              "link",
+              d3
+                .forceLink(linkNodes)
+                .id((d) => d.id)
+                .distance(120),
+            )
+            .force("charge", d3.forceManyBody().strength(-260))
+            .force("center", d3.forceCenter(width / 2, height / 2))
+            .force("collide", d3.forceCollide(34));
+
+          const link = svg
+            .append("g")
+            .selectAll("line")
+            .data(linkNodes)
+            .join("line")
+            .attr("class", "edge-line");
+          const node = svg
+            .append("g")
+            .selectAll("circle")
+            .data(nodes)
+            .join("circle")
+            .attr("r", 14)
+            .attr("fill", (d) => colorFor(d.verdict))
+            .call(
+              d3
+                .drag()
+                .on("start", (e, d) => {
+                  if (!e.active) sim.alphaTarget(0.3).restart();
+                  d.fx = d.x;
+                  d.fy = d.y;
+                })
+                .on("drag", (e, d) => {
+                  d.fx = e.x;
+                  d.fy = e.y;
+                })
+                .on("end", (e, d) => {
+                  if (!e.active) sim.alphaTarget(0);
+                  d.fx = null;
+                  d.fy = null;
+                }),
+            );
+          node
+            .append("title")
+            .text((d) => `${d.name} (${d.id})\n${d.verdict || "Not scored"}`);
+
+          const label = svg
+            .append("g")
+            .selectAll("text")
+            .data(nodes)
+            .join("text")
+            .attr("class", "node-label")
+            .attr("dy", -20)
+            .attr("text-anchor", "middle")
+            .text((d) => (d.name || d.id).slice(0, 22));
+
+          sim.on("tick", () => {
+            link
+              .attr("x1", (d) => d.source.x)
+              .attr("y1", (d) => d.source.y)
+              .attr("x2", (d) => d.target.x)
+              .attr("y2", (d) => d.target.y);
+            node.attr("cx", (d) => d.x).attr("cy", (d) => d.y);
+            label.attr("x", (d) => d.x).attr("y", (d) => d.y);
+          });
+
+          $("network-legend").innerHTML = `
+      <span><i class="dot" style="background:#1F6E4C;"></i>Verified</span>
+      <span><i class="dot" style="background:#B8860B;"></i>Review</span>
+      <span><i class="dot" style="background:#B3402F;"></i>Risk / Reject</span>
+      <span><i class="dot" style="background:#9CA3AF;"></i>Not scored</span>
+      <span style="margin-left:auto;">${nodes.length} suppliers &middot; ${edges.length} shared link(s)</span>`;
+
+          if (!nodes.length) {
+            err.textContent =
+              "No suppliers yet — verify a few, or load demo data from the dashboard.";
+            err.classList.add("active");
+          }
+        } catch (e) {
+          err.textContent = e.message || "Couldn't load the fraud network.";
+          err.classList.add("active");
+        }
+      }
+
+      function traceLineHtml(t) {
+        return `<div class="trace-line shown done">
+      <span class="check ${t.ok ? "" : "bad"}">${t.ok ? "✓" : "✗"}</span>
+      <span class="t-agent">${esc(t.agent)}</span>
+      <span class="t-msg">${esc(t.message)}</span>
+      <span class="t-ms">${t.ms !== null && t.ms !== undefined ? esc(t.ms) + " ms" : ""}</span>
+    </div>`;
+      }
+
+      function animateScore() {
+        const el = $("score-num");
+        if (!el || el.dataset.target === "") return;
+        const target = Number(el.dataset.target);
+        const start = performance.now();
+        const dur = 900;
+        (function tick(now) {
+          const t = Math.min(1, (now - start) / dur);
+          el.textContent = Math.round(target * (1 - Math.pow(1 - t, 3)));
+          if (t < 1) requestAnimationFrame(tick);
+        })(start);
+      }
+
+      // ---------- Dashboard ----------
+      async function loadDashboard() {
+        const body = $("dash-body");
+        const summary = $("dash-summary");
+        clearError("dash-error");
+        summary.style.display = "none";
+        body.innerHTML = `<div class="loading">Loading suppliers&hellip;</div>`;
+        try {
+          const res = await api("/suppliers");
+          const rows = res.data || [];
+          if (!rows.length) {
+            body.innerHTML = `
+          <div class="empty-state">
+            <h2>No suppliers yet</h2>
+            <p>Verify a GSTIN and it will appear here with its trust verdict. Want to see the risk agent and fraud checks in action first? Load a demo set: real companies fetched from live GST data, plus hand-crafted fraud cases (labelled as such).</p>
+            <div class="hero-actions">
+              <a href="#/verify" class="btn-primary">Verify your first supplier</a>
+              <button type="button" class="btn-ghost" data-action="seed">Load demo data</button>
+            </div>
+          </div>`;
+            return;
+          }
+          const by = (res.meta && res.meta.by_verdict) || {};
+          summary.innerHTML = `
+        <div class="proof-item"><div class="num mono">${rows.length}</div><div class="label">suppliers</div></div>
+        <div class="proof-item"><div class="num mono v-verified">${by.VERIFIED || 0}</div><div class="label">verified</div></div>
+        <div class="proof-item"><div class="num mono v-review">${by.REVIEW || 0}</div><div class="label">need review</div></div>
+        <div class="proof-item"><div class="num mono v-risk">${(by.RISK || 0) + (by.REJECT || 0)}</div><div class="label">high risk</div></div>`;
+          summary.style.display = "flex";
+          body.innerHTML = `<div class="table-scroll"><table class="tbl">
+        <thead><tr><th>Supplier</th><th>Verdict</th><th>Trust score</th><th>Data</th><th>Last verified</th></tr></thead>
+        <tbody>${rows
+          .map(
+            (s) => `
+          <tr class="${s.last_log_id ? "row-link" : ""}" data-log="${esc(s.last_log_id)}">
+            <td><div class="cell-name">${esc(s.name || "Unnamed supplier")}</div><div class="cell-sub">${esc(s.gstin)}</div></td>
+            <td>${verdictHtml(s.verdict)}</td>
+            <td class="num-cell">${s.trust_score === null ? "—" : esc(s.trust_score)}</td>
+            <td>${originTag(s.data_origin)}</td>
+            <td class="muted">${esc(fmtTime(s.last_verified_at))}</td>
+          </tr>`,
+          )
+          .join("")}</tbody></table></div>`;
+        } catch (e) {
+          body.innerHTML = "";
+          showError("dash-error", e.message);
+        }
+      }
+
+      async function seedDemo(btn) {
+        const label = btn.textContent;
+        btn.disabled = true;
+        btn.textContent = "Loading…";
+        clearError("dash-error");
+        try {
+          await api("/demo/seed", { method: "POST" });
+          await loadDashboard();
+        } catch (e) {
+          showError("dash-error", e.message);
+        } finally {
+          btn.disabled = false;
+          btn.textContent = label;
+        }
+      }
+
+      document.addEventListener("click", (e) => {
+        const seedBtn = e.target.closest("[data-action='seed']");
+        if (seedBtn) {
+          seedDemo(seedBtn);
+          return;
+        }
+        const row = e.target.closest("tr.row-link");
+        if (row && row.dataset.log) navigate(`/verify/${row.dataset.log}`);
+      });
+
+      // ---------- History ----------
+      let historyRows = [];
+
+      function filteredHistory() {
+        const q = $("history-filter").value.trim().toLowerCase();
+        return q
+          ? historyRows.filter(
+              (r) =>
+                r.gstin.toLowerCase().includes(q) ||
+                (r.name || "").toLowerCase().includes(q),
+            )
+          : historyRows;
+      }
+
+      function renderHistory() {
+        const rows = filteredHistory();
+        const body = $("history-body");
+        if (!historyRows.length) {
+          body.innerHTML = `<div class="empty-state"><h2>Nothing verified yet</h2><p>Run your first check and it will be logged here.</p><a href="#/verify" class="btn-primary">Verify a GSTIN</a></div>`;
+          return;
+        }
+        if (!rows.length) {
+          body.innerHTML = `<div class="loading">No verifications match that filter.</div>`;
+          return;
+        }
+        body.innerHTML = `<div class="table-scroll"><table class="tbl">
+      <thead><tr><th>When</th><th>Supplier</th><th>Verdict</th><th>Score</th><th>Source</th></tr></thead>
+      <tbody>${rows
+        .map(
+          (r) => `
+        <tr class="row-link" data-log="${esc(r.log_id)}">
+          <td class="muted">${esc(fmtTime(r.timestamp))}</td>
+          <td><div class="cell-name">${esc(r.name || "—")}</div><div class="cell-sub">${esc(r.gstin)}</div></td>
+          <td>${verdictHtml(r.verdict)}</td>
+          <td class="num-cell">${r.trust_score === null ? "—" : esc(r.trust_score)}</td>
+          <td>${originTag(r.data_origin)}</td>
+        </tr>`,
+        )
+        .join("")}</tbody></table></div>`;
+      }
+
+      async function loadHistory() {
+        clearError("history-error");
+        $("history-body").innerHTML =
+          `<div class="loading">Loading history&hellip;</div>`;
+        try {
+          const res = await api("/history?limit=200");
+          historyRows = res.data || [];
+          renderHistory();
+        } catch (e) {
+          $("history-body").innerHTML = "";
+          showError("history-error", e.message);
+        }
+      }
+
+      $("history-filter").addEventListener("input", renderHistory);
+
+      $("history-export").addEventListener("click", () => {
+        const safe = (v) => {
+          let t = String(v ?? "");
+          if (/^[=+\-@]/.test(t)) t = "'" + t; // neutralise spreadsheet formula injection
+          return `"${t.replace(/"/g, '""')}"`;
+        };
+        const lines = [
+          [
+            "time",
+            "gstin",
+            "name",
+            "verdict",
+            "trust_score",
+            "source",
+            "data_origin",
+          ].join(","),
+        ].concat(
+          filteredHistory().map((r) =>
+            [
+              new Date(r.timestamp * 1000).toISOString(),
+              r.gstin,
+              r.name,
+              r.verdict,
+              r.trust_score,
+              r.source,
+              r.data_origin,
+            ]
+              .map(safe)
+              .join(","),
+          ),
+        );
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(
+          new Blob([lines.join("\n")], { type: "text/csv" }),
+        );
+        a.download = "verification-history.csv";
+        a.click();
+        URL.revokeObjectURL(a.href);
+      });
+
+      // ---------- Report page ----------
+      async function loadReport(id) {
+        clearError("report-error");
+        $("report-body").innerHTML =
+          `<div class="loading">Loading report&hellip;</div>`;
+        try {
+          const res = await api(`/reports/${encodeURIComponent(id)}`);
+          $("report-body").innerHTML =
+            `<div class="result-card active">${renderReport(res.data, { showTrace: true })}</div>`;
+        } catch (e) {
+          $("report-body").innerHTML = "";
+          showError("report-error", e.message);
+        }
+      }
+
+      // ---------- Login ----------
+      document
+        .getElementById("login-form")
+        .addEventListener("submit", async (e) => {
+          e.preventDefault();
+          const email = document.getElementById("login-email").value.trim();
+          const password = document.getElementById("login-password").value;
+          const errBox = document.getElementById("login-error");
+          const submitBtn = document.getElementById("login-submit");
+
+          errBox.style.display = "none";
+          submitBtn.disabled = true;
+          submitBtn.textContent = "Logging in...";
+
+          try {
+            const res = await fetch(`${API_BASE}/auth/login`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ email, password }),
+            });
+            const data = await res.json();
+
+            if (!res.ok) {
+              throw new Error(
+                data.error === "invalid_credentials"
+                  ? "Incorrect email or password."
+                  : data.error === "account_not_confirmed"
+                    ? "Account not confirmed yet — check your email for the code."
+                    : "Couldn't log in. Try again.",
+              );
+            }
+
+            session.token = data.access_token;
+            session.email = email;
+            navigate("/dashboard");
+            render();
+          } catch (err) {
+            errBox.textContent = err.message;
+            errBox.style.display = "block";
+          } finally {
+            submitBtn.disabled = false;
+            submitBtn.textContent = "Log in";
+          }
+        });
+
+      // ---------- Signup ----------
+      document
+        .getElementById("signup-form")
+        .addEventListener("submit", async (e) => {
+          e.preventDefault();
+          const email = document.getElementById("signup-email").value.trim();
+          const password = document.getElementById("signup-password").value;
+          const errBox = document.getElementById("signup-error");
+          const okBox = document.getElementById("signup-success");
+          const submitBtn = document.getElementById("signup-submit");
+
+          errBox.style.display = "none";
+          okBox.style.display = "none";
+          submitBtn.disabled = true;
+          submitBtn.textContent = "Signing up...";
+
+          try {
+            const res = await fetch(`${API_BASE}/auth/signup`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ email, password }),
+            });
+            const data = await res.json();
+
+            if (!res.ok) {
+              throw new Error(
+                data.error === "account_already_exists"
+                  ? "An account with this email already exists."
+                  : data.error === "invalid_password"
+                    ? "Password must be at least 8 characters, with an uppercase letter and a number."
+                    : "Couldn't sign up. Try again.",
+              );
+            }
+
+            pendingSignupEmail = email;
+            okBox.textContent =
+              "Check your email for a 6-digit verification code.";
+            okBox.style.display = "block";
+            document.getElementById("signup-form").style.display = "none";
+            document.getElementById("confirm-form").style.display = "block";
+          } catch (err) {
+            errBox.textContent = err.message;
+            errBox.style.display = "block";
+          } finally {
+            submitBtn.disabled = false;
+            submitBtn.textContent = "Sign up";
+          }
+        });
+
+      // ---------- Confirm signup ----------
+      document
+        .getElementById("confirm-form")
+        .addEventListener("submit", async (e) => {
+          e.preventDefault();
+          const code = document.getElementById("confirm-code").value.trim();
+          const errBox = document.getElementById("signup-error");
+          const okBox = document.getElementById("signup-success");
+          const submitBtn = document.getElementById("confirm-submit");
+
+          errBox.style.display = "none";
+          submitBtn.disabled = true;
+          submitBtn.textContent = "Confirming...";
+
+          try {
+            const res = await fetch(`${API_BASE}/auth/confirm`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ email: pendingSignupEmail, code }),
+            });
+            const data = await res.json();
+
+            if (!res.ok) {
+              throw new Error(
+                data.error === "invalid_code"
+                  ? "That code doesn't match. Check your email and try again."
+                  : data.error === "code_expired"
+                    ? "That code has expired — sign up again to get a new one."
+                    : "Couldn't confirm. Try again.",
+              );
+            }
+
+            okBox.textContent = "Account confirmed. Redirecting to log in...";
+            setTimeout(() => navigate("/login"), 1200);
+          } catch (err) {
+            errBox.textContent = err.message;
+            errBox.style.display = "block";
+          } finally {
+            submitBtn.disabled = false;
+            submitBtn.textContent = "Confirm account";
+          }
+        });
+
+      // ---------- Verify ----------
+      $("try-sample").addEventListener("click", () => {
+        $("gstin-input").value = SAMPLE_GSTIN;
+      });
+      $("try-bad").addEventListener("click", () => {
+        $("gstin-input").value = TAMPERED_GSTIN;
+      });
+
+      $("verify-form").addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const gstin = $("gstin-input").value.trim().toUpperCase();
+        const submitBtn = $("verify-submit");
+        const trace = $("trace");
+        const card = $("result-card");
+
+        const payload = { gstin };
+        const name = $("opt-name").value.trim();
+        const bank = $("opt-bank").value.trim();
+        const address = $("opt-address").value.trim();
+        if (name) payload.name = name;
+        if (bank) payload.bank_account = bank;
+        if (address) payload.address = address;
+
+        clearError("verify-error");
+        card.classList.remove("active");
+        $("trace-list").innerHTML = "";
+        $("trace-pending").style.display = "block";
+        trace.classList.add("active");
+        submitBtn.disabled = true;
+        submitBtn.textContent = "Verifying...";
+
+        try {
+          const out = await api("/suppliers/verify", {
+            method: "POST",
+            body: payload,
+          });
+
+          // Replay the steps the backend agents actually recorded for this run.
+          $("trace-pending").style.display = "none";
+          for (const step of out.trace || []) {
+            $("trace-list").insertAdjacentHTML(
+              "beforeend",
+              traceLineHtml(step),
+            );
+            await sleep(300);
+          }
+
+          const a = out.assessment || {};
+          const lookup = (out.data && out.data.gstin_lookup) || {};
+          card.innerHTML = renderReport({
+            gstin: out.gstin,
+            name: lookup.legal_name && lookup.legal_name !== "UNKNOWN" ? lookup.legal_name : (name || ""),
+            verdict: a.verdict, trust_score: a.trust_score, findings: a.findings,
+            summary: out.summary, summary_source: out.summary_source,
+            source: out.source, data_origin: "live_api", error: out.error, result: out,
+          }, { animate: true, permalinkId: out.log_id });
+          card.classList.add("active");
+          animateScore();
+        } catch (err) {
+          trace.classList.remove("active");
+          showError(
+            "verify-error",
+            err.message || "Something went wrong. Try again.",
+          );
+        } finally {
+          submitBtn.disabled = false;
+          submitBtn.textContent = "Verify";
+        }
+      });
+
+      // ---------- Init ----------
+      render();
+    </script>
+  </body>
+</html>
+</file>
+
+<file path="lambda/auth_confirm.py">
+import json
+import os
+import boto3
+from botocore.exceptions import ClientError
+
+cognito = boto3.client("cognito-idp")
+CLIENT_ID = os.environ["USER_POOL_CLIENT_ID"]
+
+
+def handler(event, context):
+    try:
+        body = json.loads(event.get("body") or "{}")
+        email = body.get("email", "").strip().lower()
+        code = body.get("code", "")
+
+        if not email or not code:
+            return _response(400, {"error": "email and code are required"})
+
+        cognito.confirm_sign_up(
+            ClientId=CLIENT_ID,
+            Username=email,
+            ConfirmationCode=code,
+        )
+        return _response(200, {"message": "Account confirmed. You can now log in."})
+
+    except cognito.exceptions.CodeMismatchException:
+        return _response(400, {"error": "invalid_code"})
+    except cognito.exceptions.ExpiredCodeException:
+        return _response(400, {"error": "code_expired"})
+    except ClientError as e:
+        return _response(500, {"error": "confirm_failed", "detail": e.response["Error"]["Message"]})
+
+
+def _response(status_code, body_dict):
+    return {
+        "statusCode": status_code,
+        "headers": {"Content-Type": "application/json","Access-Control-Allow-Origin": "*"},
+        "body": json.dumps(body_dict),
+    }
+</file>
+
+<file path="lambda/auth_login.py">
+import json
+import os
+import boto3
+from botocore.exceptions import ClientError
+
+cognito = boto3.client("cognito-idp")
+CLIENT_ID = os.environ["USER_POOL_CLIENT_ID"]
+
+
+def handler(event, context):
+    try:
+        body = json.loads(event.get("body") or "{}")
+        email = body.get("email", "").strip().lower()
+        password = body.get("password", "")
+
+        if not email or not password:
+            return _response(400, {"error": "email and password are required"})
+
+        result = cognito.initiate_auth(
+            ClientId=CLIENT_ID,
+            AuthFlow="USER_PASSWORD_AUTH",
+            AuthParameters={"USERNAME": email, "PASSWORD": password},
+        )
+        auth = result["AuthenticationResult"]
+
+        return _response(200, {
+            "access_token": auth["AccessToken"],
+            "id_token": auth["IdToken"],
+            "refresh_token": auth["RefreshToken"],
+            "expires_in": auth["ExpiresIn"],
+        })
+
+    except cognito.exceptions.NotAuthorizedException:
+        return _response(401, {"error": "invalid_credentials"})
+    except cognito.exceptions.UserNotConfirmedException:
+        return _response(403, {"error": "account_not_confirmed"})
+    except ClientError as e:
+        return _response(500, {"error": "login_failed", "detail": e.response["Error"]["Message"]})
+
+
+def _response(status_code, body_dict):
+    return {
+        "statusCode": status_code,
+        "headers": {"Content-Type": "application/json","Access-Control-Allow-Origin": "*"},
+        "body": json.dumps(body_dict),
+    }
+</file>
+
+<file path="lambda/auth_signup.py">
+import json
+import os
+import boto3
+from botocore.exceptions import ClientError
+
+cognito = boto3.client("cognito-idp")
+CLIENT_ID = os.environ["USER_POOL_CLIENT_ID"]
+
+
+def handler(event, context):
+    try:
+        body = json.loads(event.get("body") or "{}")
+        email = body.get("email", "").strip().lower()
+        password = body.get("password", "")
+
+        if not email or not password:
+            return _response(400, {"error": "email and password are required"})
+
+        cognito.sign_up(
+            ClientId=CLIENT_ID,
+            Username=email,
+            Password=password,
+            UserAttributes=[{"Name": "email", "Value": email}],
+        )
+
+        return _response(201, {
+            "message": "Signup successful. Check email for verification code.",
+            "email": email,
+        })
+
+    except cognito.exceptions.UsernameExistsException:
+        return _response(409, {"error": "account_already_exists"})
+    except cognito.exceptions.InvalidPasswordException as e:
+        return _response(400, {"error": "invalid_password", "detail": str(e)})
+    except ClientError as e:
+        return _response(500, {"error": "signup_failed", "detail": e.response["Error"]["Message"]})
+
+
+def _response(status_code, body_dict):
+    return {
+        "statusCode": status_code,
+        "headers": {"Content-Type": "application/json","Access-Control-Allow-Origin": "*"},
+        "body": json.dumps(body_dict),
+    }
+</file>
+
+<file path="tests/test_handlers.py">
+"""
+Handler-level tests against moto (in-memory DynamoDB). No network, no AWS account.
+Covers: two users are isolated, ring detection flips verdicts across suppliers,
+seeding is idempotent, /reports never leaks across users, counter is atomic.
+"""
+import importlib
+import json
+import os
+
+import boto3
+import pytest
+from moto import mock_aws
+
+os.environ.update({
+    "AWS_ACCESS_KEY_ID": "x", "AWS_SECRET_ACCESS_KEY": "x", "AWS_DEFAULT_REGION": "ap-south-1",
+    "SUPPLIERS_TABLE": "t-Suppliers", "VERIFICATION_LOG_TABLE": "t-Log", "STATS_TABLE": "t-Stats",
+})
+
+TOKENS = {"tok-alice": "alice", "tok-bob": "bob"}
+
+
+def mod(name):
+    return importlib.import_module(f"lambda.{name}")
+
+
+def ev(token="tok-alice", body=None, params=None, path=None):
+    e = {"headers": {"Authorization": f"Bearer {token}"} if token else {}}
+    if body is not None:
+        e["body"] = json.dumps(body)
+    if params:
+        e["queryStringParameters"] = params
+    if path:
+        e["pathParameters"] = path
+    return e
+
+
+def call(module, **kw):
+    r = mod(module).handler(ev(**kw), None)
+    return r["statusCode"], json.loads(r["body"])
+
+
+@pytest.fixture()
+def env(monkeypatch):
+    with mock_aws():
+        db = boto3.client("dynamodb")
+        def make(name, hash_key, range_key=None):
+            keys = [{"AttributeName": hash_key, "KeyType": "HASH"}]
+            attrs = [{"AttributeName": hash_key, "AttributeType": "S"}]
+            if range_key:
+                keys.append({"AttributeName": range_key, "KeyType": "RANGE"})
+                attrs.append({"AttributeName": range_key, "AttributeType": "S"})
+            db.create_table(TableName=name, KeySchema=keys, AttributeDefinitions=attrs,
+                            BillingMode="PAY_PER_REQUEST")
+        make("t-Suppliers", "owner_user_id", "gstin")
+        make("t-Log", "owner_user_id", "log_id")
+        make("t-Stats", "stat_id")
+
+        common = mod("common")
+        def fake_get_user(AccessToken):
+            if AccessToken not in TOKENS:
+                from botocore.exceptions import ClientError
+                raise ClientError({"Error": {"Code": "NotAuthorizedException", "Message": "bad"}}, "GetUser")
+            return {"Username": TOKENS[AccessToken]}
+        monkeypatch.setattr(common.cognito, "get_user", fake_get_user)
+
+        # Fake the live lookup: any structurally valid GSTIN "exists" and is Active, old.
+        def fake_verify(gstin, trace=None):
+            from agents.verification_agent import VerificationResult
+            from agents.gstin_utils import validate_gstin
+            from agents.trace import step
+            if not validate_gstin(gstin).is_valid:
+                step(trace, "verification", "format check FAILED", ok=False)
+                return VerificationResult(gstin, "failed", "offline_validation",
+                                          error="invalid_gstin:checksum_mismatch")
+            step(trace, "verification", "gstincheck.co.in lookup: record found", ok=True, started=None)
+            return VerificationResult(gstin, "degraded", "gstincheck.co.in", data={"gstin_lookup": {
+                "legal_name": "ACME SUPPLIES PRIVATE LIMITED", "registration_status": "Active",
+                "raw": {"rgdt": "01/07/2017"}}})
+        monkeypatch.setattr(mod("verify_supplier"), "verify_gstin", fake_verify)
+        yield
+
+
+def test_unauthenticated_requests_get_401(env):
+    for m in ("get_suppliers", "get_history", "demo_seed"):
+        assert call(m, token=None)[0] == 401
+    assert call("get_report", token="nope", path={"log_id": "x"})[0] == 401
+
+
+def test_verify_persists_and_returns_assessment_trace_and_log_id(env):
+    code, out = call("verify_supplier", body={"gstin": "29AAACI4798L1ZU"})
+    assert code == 200
+    assert out["assessment"]["verdict"] == "VERIFIED"
+    assert out["trace"] and out["log_id"]
+    _, sup = call("get_suppliers")
+    assert sup["meta"]["total"] == 1 and sup["data"][0]["name"] == "ACME SUPPLIES PRIVATE LIMITED"
+
+
+def test_two_users_see_two_different_supplier_lists(env):
+    call("verify_supplier", token="tok-alice", body={"gstin": "29AAACI4798L1ZU"})
+    call("verify_supplier", token="tok-bob", body={"gstin": "07AAACT2727Q1ZY"})
+    a = call("get_suppliers", token="tok-alice")[1]["data"]
+    b = call("get_suppliers", token="tok-bob")[1]["data"]
+    assert [s["gstin"] for s in a] == ["29AAACI4798L1ZU"]
+    assert [s["gstin"] for s in b] == ["07AAACT2727Q1ZY"]
+
+
+def test_report_is_owner_scoped_and_404_not_403(env):
+    _, out = call("verify_supplier", token="tok-alice", body={"gstin": "29AAACI4798L1ZU"})
+    assert call("get_report", token="tok-alice", path={"log_id": out["log_id"]})[0] == 200
+    code, body = call("get_report", token="tok-bob", path={"log_id": out["log_id"]})
+    assert code == 404 and body["error"] == "not_found"
+
+
+def test_invalid_gstin_is_logged_as_reject_but_not_saved_as_supplier(env):
+    _, out = call("verify_supplier", body={"gstin": "27AAPFU0939F1ZX"})
+    assert out["assessment"]["verdict"] == "REJECT" and out["assessment"]["trust_score"] == 0
+    assert call("get_suppliers")[1]["meta"]["total"] == 0
+    hist = call("get_history")[1]
+    assert hist["meta"]["total"] == 1 and hist["data"][0]["verdict"] == "REJECT"
+
+
+def test_second_supplier_sharing_a_bank_account_flips_the_first_to_risk(env):
+    call("verify_supplier", body={"gstin": "29AAAPL1234C1ZA", "bank_account": "0001 1122 2333"})
+    assert call("get_suppliers")[1]["data"][0]["verdict"] == "VERIFIED"
+    _, out = call("verify_supplier", body={"gstin": "33AABCT3518Q1Z3", "bank_account": "000111222333"})
+    assert out["assessment"]["verdict"] == "RISK"
+    verdicts = {s["gstin"]: s["verdict"] for s in call("get_suppliers")[1]["data"]}
+    assert verdicts == {"29AAAPL1234C1ZA": "RISK", "33AABCT3518Q1Z3": "RISK"}   # the OLD one flipped too
+
+
+def test_reverify_without_bank_account_keeps_previously_declared_one(env):
+    call("verify_supplier", body={"gstin": "29AAAPL1234C1ZA", "bank_account": "000111222333"})
+    call("verify_supplier", body={"gstin": "33AABCT3518Q1Z3", "bank_account": "000111222333"})
+    _, out = call("verify_supplier", body={"gstin": "29AAAPL1234C1ZA"})       # no bank in the request
+    assert out["assessment"]["verdict"] == "RISK"
+
+
+def test_seed_loads_4_real_plus_4_crafted_and_ring_is_detected_by_the_rules(env):
+    code, out = call("demo_seed")
+    assert code == 200 and out["data"]["seeded"] == 9
+    assert out["meta"]["by_verdict"] == {"VERIFIED": 5, "RISK": 3, "REVIEW": 1}
+    rows = {s["gstin"]: s for s in call("get_suppliers")[1]["data"]}
+    assert rows["07AAACT2727Q1ZY"]["verdict"] == "REVIEW"                      # shell company
+    for g in ("29AAAPL1234C1ZA", "33AABCT3518Q1Z3", "06AAFCS1234D1ZV"):        # ring
+        assert rows[g]["verdict"] == "RISK"
+        assert any(f["code"] == "shared_bank_account" for f in rows[g]["findings"])
+    assert all(r["data_origin"] in ("live_api", "crafted_test_case") for r in rows.values())
+
+
+def test_seed_is_idempotent(env):
+    call("demo_seed"); call("demo_seed")
+    assert call("get_suppliers")[1]["meta"]["total"] == 9
+    assert call("get_history")[1]["meta"]["total"] == 9
+
+
+def test_history_sorted_newest_first_and_filterable(env):
+    call("verify_supplier", body={"gstin": "29AAACI4798L1ZU"})
+    call("verify_supplier", body={"gstin": "07AAACT2727Q1ZY"})
+    h = call("get_history")[1]["data"]
+    assert h[0]["timestamp"] >= h[1]["timestamp"]
+    only = call("get_history", params={"gstin": "07"})[1]["data"]
+    assert [r["gstin"] for r in only] == ["07AAACT2727Q1ZY"]
+    assert call("get_history", params={"limit": "abc"})[0] == 400
+
+
+def test_counter_is_real_and_public(env):
+    assert call("get_stats", token=None)[1]["data"]["total_checks"] == 0
+    call("verify_supplier", body={"gstin": "29AAACI4798L1ZU"})
+    call("verify_supplier", token="tok-bob", body={"gstin": "29AAACI4798L1ZU"})
+    assert call("get_stats", token=None)[1]["data"]["total_checks"] == 2      # shared across users
+
+
+def test_legacy_rows_without_risk_data_stay_unscored_not_falsely_verified(env):
+    import boto3
+    boto3.resource("dynamodb").Table("t-Suppliers").put_item(Item={
+        "owner_user_id": "alice", "gstin": "29AAACI4798L1ZU", "legal_name": "OLD ROW",
+        "status": "degraded", "source": "gstincheck.co.in", "last_verified_at": 1})
+    call("verify_supplier", body={"gstin": "07AAACT2727Q1ZY"})           # triggers a refresh over all rows
+    rows = {s["gstin"]: s for s in call("get_suppliers")[1]["data"]}
+    assert rows["29AAACI4798L1ZU"]["verdict"] == ""                      # UI shows "Not scored"
+    assert rows["07AAACT2727Q1ZY"]["verdict"] == "VERIFIED"
+</file>
+
+<file path=".env.example">
+DATA_GOV_IN_API_KEY=your_key_here
+GSTINCHECK_API_KEY=your_key_here
+</file>
+
+<file path=".gitignore">
+.env
+node_modules/
+__pycache__/
+*.pyc
+.aws-sam/
+.DS_Store
+
+infra/samconfig.toml
+</file>
+
+<file path="README.md">
+# supplier-verification-registry
+</file>
+
+<file path="requirements-dev.txt">
+strands-agents>=0.1.0
+pytest>=7.4.0
+boto3>=1.34.0
+moto[dynamodb]>=5.0.0
+</file>
+
+<file path="requirements.txt">
+requests>=2.31.0
+python-dotenv>=1.0.0
+</file>
+
+<file path="lambda/verify_supplier.py">
+import json
+import re
+import uuid
+
+from botocore.exceptions import ClientError
+
+from agents.verification_agent import verify_gstin
+from agents import risk_agent
+from agents.trace import step, now
+from agents import summary_agent
+
+from . import common, store
+
+MAX_FIELD_LEN = 200
+
+
+def _clean(value, max_len=MAX_FIELD_LEN):
+    return str(value).strip()[:max_len] if value not in (None, "") else ""
+
+
+def _parse_declared(body):
+    """Optional supplier details the buyer typed in. Anything omitted stays empty."""
+    declared = {}
+    for key in ("name", "address"):
+        v = _clean(body.get(key))
+        if v:
+            declared[key] = v
+    bank = re.sub(r"\D", "", str(body.get("bank_account") or ""))[:20]
+    if bank:
+        declared["bank_account"] = bank
+    return declared
+
+
+def handler(event, context):
+    user_id = common.get_user_id(event)
+    if not user_id:
+        return common.response(401, {"error": "missing_or_invalid_token"})
+
+    try:
+        body = json.loads(event.get("body") or "{}")
+        gstin = (body.get("gstin") or "").strip().upper()
+        if not gstin:
+            return common.response(400, {"error": "gstin_required"})
+
+        trace = []
+
+        # ---- agent 1: verification (live government-sourced data) ----
+        result = verify_gstin(gstin, trace=trace)
+        result_dict = result.to_dict()
+        format_invalid = (result_dict.get("error") or "").startswith("invalid_gstin:")
+
+        # Declared details: what the buyer typed now, falling back to what we
+        # already know about this supplier so re-verifying never wipes them.
+        existing = None if format_invalid else store.get_supplier(user_id, gstin)
+        declared = store.declared_from_row(existing) if existing else {}
+        declared.update(_parse_declared(body))
+
+        # ---- agent 2: risk (single-supplier rules) ----
+        own = risk_agent.own_findings(result_dict, declared, trace=trace)
+
+        now_ts = store.now_ts()
+        log_id = str(uuid.uuid4())
+        lookup = (result_dict.get("data") or {}).get("gstin_lookup") or {}
+        legal_name = lookup.get("legal_name") if lookup.get("legal_name") != "UNKNOWN" else ""
+
+        if format_invalid:
+            # Malformed GSTINs are logged (so /history shows the REJECT) but are
+            # not saved as suppliers - typos shouldn't clutter the dashboard.
+            assessment = risk_agent.build_assessment(own)
+        else:
+            row = {
+                "owner_user_id": user_id,
+                "gstin": gstin,
+                "legal_name": legal_name or "",
+                "status": result_dict["status"],
+                "source": result_dict["source"] or "none",
+                "data_origin": "live_api",
+                "registration_status": lookup.get("registration_status", "") or "",
+                "own_findings_json": json.dumps(own),
+                "last_verified_at": now_ts,
+                "last_log_id": log_id,
+            }
+            row.update(declared)
+            raw_rgdt = (lookup.get("raw") or {}).get("rgdt")
+            reg_date = risk_agent.parse_date(raw_rgdt)
+            if reg_date:
+                row["registered_date"] = reg_date.isoformat()
+            store.suppliers_table().put_item(Item=row)
+
+            # ---- agent 2b: risk (cross-supplier rules) over ALL of this owner's
+            # suppliers. Also updates OTHER suppliers that just became part of a ring.
+            t = now()
+            assessments = store.refresh_assessments(user_id)
+            assessment = assessments[gstin]
+            step(trace, "risk",
+                 f"Verdict: {assessment['verdict']} (trust score {assessment['trust_score']}/100)",
+                 ok=assessment["verdict"] == "VERIFIED", started=t)
+
+        if format_invalid:
+            step(trace, "risk",
+                 f"Verdict: {assessment['verdict']} (trust score {assessment['trust_score']}/100)",
+                 ok=False)
+
+        name_for_summary = legal_name or declared.get("name", "") or gstin
+        summary_text, summary_source = summary_agent.summarize(
+        name_for_summary, assessment["verdict"], assessment["trust_score"], assessment["findings"], trace=trace)    
+
+        store.log_table().put_item(Item={
+            "owner_user_id": user_id,
+            "log_id": log_id,
+            "gstin": gstin,
+            "name": legal_name or declared.get("name", ""),
+            "status": result_dict["status"],
+            "verdict": assessment["verdict"],
+            "trust_score": assessment["trust_score"],
+            "findings_json": json.dumps(assessment["findings"]),
+            "trace_json": json.dumps(trace),
+            "data_origin": "live_api",
+            "source": result_dict["source"] or "none",
+            "error": result_dict.get("error") or "",
+            "timestamp": now_ts,
+            "raw_result": json.dumps(result_dict),
+            "summary": summary_text, 
+            "summary_source": summary_source,
+        })
+
+        store.bump_verification_counter()
+
+        out = dict(result_dict)          # legacy flat shape kept: gstin/status/source/data/error
+        out["log_id"] = log_id
+        out["assessment"] = assessment
+        out["trace"] = trace
+        out["summary"] = summary_text; 
+        out["summary_source"] = summary_source
+        return common.response(200, out)
+
+    except ClientError as e:
+        return common.response(500, {"error": "dynamodb_write_failed", "detail": e.response["Error"]["Message"]})
+    except Exception as e:
+        return common.response(500, {"error": "unexpected_error", "detail": str(e)})
+</file>
+
+<file path="agents/verification_agent.py">
+"""
+verification_agent.py
+
+First real network-facing piece of the pipeline. Given a GSTIN, this:
+  1. Validates it offline first (gstin_utils) - never spend an API call on
+     something that's already structurally invalid.
+  2. Calls gstincheck.co.in as the primary GSTIN lookup (legal name,
+     registration status, taxpayer type, address).
+  3. Falls back to gstinapi.in if the primary times out or rate-limits
+     (currently a documented no-op stub if you haven't signed up for that
+     key yet - see GSTINAPI_KEY in .env.example).
+  4. Cross-references data.gov.in's Company Master Data API for company-level
+     detail (CIN, ROC, paid-up capital, registration date) where available.
+
+Design decision: every external call has an explicit timeout and every
+failure path returns a structured result instead of raising - a judge
+running this against a live GSTIN that happens to 429 mid-demo should see a
+graceful degraded result, not a stack trace.
+"""
+
+import os
+import time
+import requests
+from dotenv import load_dotenv
+
+load_dotenv()
+
+from agents.gstin_utils import validate_gstin
+from agents.trace import step, now
+
+GSTINCHECK_BASE_URL = "https://sheet.gstincheck.co.in/check"
+DATA_GOV_IN_BASE_URL = "https://api.data.gov.in/resource"
+# Company Master Data resource ID - confirmed against the live dataset page
+# for "Registrars of Companies (RoC)-wise Company Master Data".
+DATA_GOV_IN_MCA_RESOURCE_ID = os.environ.get(
+    "DATA_GOV_IN_MCA_RESOURCE_ID", "4dbe5667-7b6b-41d7-82af-211562424d9a"
+)
+
+REQUEST_TIMEOUT_SECONDS = 6
+
+# bug: original assumption was that this API supported filters[pan] for a
+# direct single-company lookup. Confirmed against the live API's parameter
+# list and a real sample response that it does NOT - the only supported
+# filter is CompanyStateCode, and it returns lowercase state names
+# (e.g. "haryana"), not codes. Real field names confirmed from a live
+# response: CIN, CompanyName, CompanyStatus, CompanyStateCode,
+# PaidupCapital, CompanyRegistrationdate_date, Registered_Office_Address.
+#
+# Fix: pull that state's company list (best-effort, capped) and do a local
+# fuzzy match on CompanyName against the legal_name gstincheck.co.in
+# returned, instead of querying by PAN/CIN directly. This is enrichment
+# only - if no match is found, the pipeline still returns a result driven
+# by gstincheck.co.in alone (see verify_gstin below).
+GST_STATE_CODE_TO_DATA_GOV_IN_NAME = {
+    "01": "jammu and kashmir", "02": "himachal pradesh", "03": "punjab",
+    "04": "chandigarh", "05": "uttarakhand", "06": "haryana", "07": "delhi",
+    "08": "rajasthan", "09": "uttar pradesh", "10": "bihar", "11": "sikkim",
+    "12": "arunachal pradesh", "13": "nagaland", "14": "manipur",
+    "15": "mizoram", "16": "tripura", "17": "meghalaya", "18": "assam",
+    "19": "west bengal", "20": "jharkhand", "21": "odisha",
+    "22": "chhattisgarh", "23": "madhya pradesh", "24": "gujarat",
+    "25": "daman and diu", "26": "dadra and nagar haveli",
+    "27": "maharashtra", "28": "andhra pradesh", "29": "karnataka",
+    "30": "goa", "31": "lakshadweep", "32": "kerala", "33": "tamil nadu",
+    "34": "puducherry", "35": "andaman and nicobar islands",
+    "36": "telangana", "37": "andhra pradesh", "38": "ladakh",
+}
+
+
+class VerificationResult:
+    def __init__(self, gstin, status, source, data=None, error=None):
+        self.gstin = gstin
+        self.status = status          # "ok" | "degraded" | "failed"
+        self.source = source          # which API(s) actually answered
+        self.data = data or {}
+        self.error = error
+
+    def to_dict(self):
+        return {
+            "gstin": self.gstin,
+            "status": self.status,
+            "source": self.source,
+            "data": self.data,
+            "error": self.error,
+        }
+
+
+def _call_gstincheck(gstin, api_key):
+    """
+    Primary GSTIN lookup. Returns dict or raises on hard failure.
+
+    bug: original implementation called this as
+    /check?gstin_no=...&api_key=... which returned HTTP 404 against the real
+    service - confirmed via gstincheck.co.in's own docs that the endpoint is
+    path-based, not query-param based:
+        https://sheet.gstincheck.co.in/check/API_KEY/GSTIN_NUMBER
+    """
+    try:
+        response = requests.get(
+            f"{GSTINCHECK_BASE_URL}/{api_key}/{gstin}",
+            timeout=REQUEST_TIMEOUT_SECONDS,
+        )
+    except requests.exceptions.Timeout:
+        raise TimeoutError("gstincheck.co.in timed out")
+    except requests.exceptions.RequestException as e:
+        raise ConnectionError(f"gstincheck.co.in request failed: {e}")
+
+    if response.status_code == 429:
+        raise RuntimeError("gstincheck.co.in rate-limited")
+    if response.status_code != 200:
+        raise RuntimeError(f"gstincheck.co.in returned HTTP {response.status_code}")
+
+    payload = response.json()
+
+    # bug: a 200 response can still carry an application-level error
+    # (flag: false + errorCode) - e.g. "API_KEY_INVALID" - which the
+    # original code silently swallowed into a fake "successful" result full
+    # of UNKNOWN fields. That masked real failures as degraded-but-ok.
+    if payload.get("flag") is False:
+        error_code = payload.get("errorCode", "UNKNOWN_ERROR")
+        raise RuntimeError(f"gstincheck.co.in rejected request: {error_code}")
+
+    payload = payload.get("data", payload)
+
+    # bug: original field guesses (legal_name, gstin_status) were wrong -
+    # gstincheck.co.in is a GSP-network reseller and mirrors the actual
+    # government GST schema field names (lgnm, tradeNam, sts, dty, pradr),
+    # not friendlier renamed fields. Falling back through several possible
+    # key names since real-world responses vary slightly by GSP provider.
+    legal_name = (
+        payload.get("lgnm")
+        or payload.get("legal_name")
+        or payload.get("tradeNam")
+        or payload.get("trade_name")
+        or "UNKNOWN"
+    )
+    address = None
+    pradr = payload.get("pradr")
+    if isinstance(pradr, dict):
+        address = pradr.get("addr")
+
+    return {
+        "legal_name": legal_name,
+        "registration_status": payload.get("sts", payload.get("gstin_status", "UNKNOWN")),
+        "taxpayer_type": payload.get("dty", "UNKNOWN"),
+        "address": address,
+        "raw": payload,
+    }
+
+
+def _call_gstinapi_fallback(gstin, api_key):
+    """
+    Fallback lookup via gstinapi.in. Documented no-op if no key is
+    configured - this keeps the pipeline honest about what's actually wired
+    up vs. stubbed, rather than pretending a fallback exists when it doesn't.
+    """
+    if not api_key:
+        return None
+    try:
+        response = requests.get(
+            f"https://gstinapi.in/v1/gstin/{gstin}?api_key={api_key}",
+            timeout=REQUEST_TIMEOUT_SECONDS,
+        )
+        if response.status_code == 200:
+            payload = response.json()
+            return {
+                "legal_name": payload.get("legal_name", "UNKNOWN"),
+                "registration_status": payload.get("status", "UNKNOWN"),
+                "taxpayer_type": payload.get("taxpayer_type", "UNKNOWN"),
+                "address": payload.get("address"),
+                "raw": payload,
+            }
+    except requests.exceptions.RequestException:
+        return None
+    return None
+
+
+def _normalize_company_name(name):
+    if not name:
+        return ""
+    return "".join(ch for ch in name.lower() if ch.isalnum() or ch.isspace()).strip()
+
+
+def _call_data_gov_in(state_code, legal_name_hint, api_key):
+    """
+    Cross-reference data.gov.in's Company Master Data. This is a best-effort
+    enrichment step, not required for a verdict - if it fails or finds no
+    match, the pipeline still returns a result from gstincheck.co.in alone.
+
+    Real constraint (confirmed against the live API): the only supported
+    filter is CompanyStateCode (a lowercase state name string). There is no
+    way to query by PAN, CIN, or company name directly, so this pulls a
+    capped batch of that state's companies and matches locally by name.
+    """
+    state_name = GST_STATE_CODE_TO_DATA_GOV_IN_NAME.get(state_code)
+    if not state_name or not legal_name_hint:
+        return None
+
+    try:
+        response = requests.get(
+            f"{DATA_GOV_IN_BASE_URL}/{DATA_GOV_IN_MCA_RESOURCE_ID}",
+            params={
+                "api-key": api_key,
+                "format": "json",
+                "filters[CompanyStateCode]": state_name,
+                "limit": 200,  # capped batch, not exhaustive - enrichment only
+            },
+            timeout=REQUEST_TIMEOUT_SECONDS,
+        )
+        if response.status_code != 200:
+            return None
+        records = response.json().get("records", [])
+    except requests.exceptions.RequestException:
+        return None
+    except ValueError:
+        # malformed/non-JSON body - treat as a soft failure, not a crash
+        return None
+
+    target = _normalize_company_name(legal_name_hint)
+    for record in records:
+        candidate = _normalize_company_name(record.get("CompanyName", ""))
+        if candidate and (target in candidate or candidate in target):
+            return record
+
+    return None
+
+
+def verify_gstin(raw_gstin, trace=None):
+    """
+    Main entry point. Never raises - always returns a VerificationResult so
+    the orchestrator/API layer above never has to special-case exceptions
+    from this module.
+
+    trace: optional list. If given, every real step below appends a
+    {agent, message, ok, ms} entry (see agents/trace.py) so the UI can show
+    what actually ran instead of a canned animation.
+    """
+    gstin = (raw_gstin or "").strip().upper()
+
+    t0 = now()
+    format_check = validate_gstin(gstin)
+    step(trace, "verification",
+         "GSTIN format + Luhn mod-36 checksum: "
+         + ("valid" if format_check.is_valid else f"FAILED ({format_check.reason})"),
+         ok=format_check.is_valid, started=t0)
+    if not format_check.is_valid:
+        return VerificationResult(
+            gstin=gstin,
+            status="failed",
+            source="offline_validation",
+            error=f"invalid_gstin:{format_check.reason}",
+        )
+
+    gstincheck_key = os.environ.get("GSTINCHECK_API_KEY")
+    gstinapi_key = os.environ.get("GSTINAPI_KEY")  # may be empty - documented fallback
+    data_gov_key = os.environ.get("DATA_GOV_IN_API_KEY")
+
+    gstin_lookup = None
+    source_used = None
+    last_error = None
+
+    t1 = now()
+    try:
+        gstin_lookup = _call_gstincheck(gstin, gstincheck_key)
+        source_used = "gstincheck.co.in"
+        step(trace, "verification", "gstincheck.co.in lookup: record found",
+             ok=True, started=t1)
+    except (TimeoutError, ConnectionError, RuntimeError) as e:
+        last_error = str(e)
+        step(trace, "verification", f"gstincheck.co.in lookup failed: {last_error}",
+             ok=False, started=t1)
+        # fall back rather than fail outright
+        t2 = now()
+        gstin_lookup = _call_gstinapi_fallback(gstin, gstinapi_key)
+        source_used = "gstinapi.in" if gstin_lookup else None
+        step(trace, "verification",
+             "gstinapi.in fallback: " + ("record found" if gstin_lookup
+                                         else "no result (fallback not configured or failed)"),
+             ok=bool(gstin_lookup), started=t2)
+
+    if gstin_lookup is None:
+        return VerificationResult(
+            gstin=gstin,
+            status="failed",
+            source="none",
+            error=f"all_gstin_lookups_failed:{last_error}",
+        )
+
+    company_record = None
+    if data_gov_key and format_check.state_code:
+        t3 = now()
+        legal_name_hint = gstin_lookup.get("legal_name") if gstin_lookup else None
+        company_record = _call_data_gov_in(
+            format_check.state_code, legal_name_hint, data_gov_key
+        )
+        step(trace, "verification",
+             "data.gov.in Company Master Data cross-reference: "
+             + ("matched a company record" if company_record
+                else "no match (best-effort, name-based)"),
+             ok=bool(company_record), started=t3)
+    else:
+        step(trace, "verification",
+             "data.gov.in cross-reference skipped (no API key configured)", ok=False)
+
+    status = "ok" if (gstin_lookup and company_record) else "degraded"
+
+    return VerificationResult(
+        gstin=gstin,
+        status=status,
+        source=source_used + ("+data.gov.in" if company_record else ""),
+        data={
+            "gstin_lookup": gstin_lookup,
+            "company_record": company_record,
+            "state_code": format_check.state_code,
+            "pan": format_check.pan,
+        },
+    )
+
+
+if __name__ == "__main__":
+    # manual smoke test against a real GSTIN - requires .env keys to be set
+    import sys
+    test_gstin = sys.argv[1] if len(sys.argv) > 1 else "27AAPFU0939F1ZV"
+    result = verify_gstin(test_gstin)
+    print(result.to_dict())
+</file>
+
+<file path="infra/template.yaml">
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: Supplier Verification Registry — DynamoDB + Cognito
+
+Parameters:
+  GstincheckApiKey:
+    Type: String
+    NoEcho: true
+  DataGovInApiKey:
+    Type: String
+    NoEcho: true
+    Default: ""
+
+Globals:
+  Function:
+    Runtime: python3.13
+    Timeout: 10
+    MemorySize: 256
+    Environment:
+      Variables:
+        SUPPLIERS_TABLE: !Ref SuppliersTable
+        VERIFICATION_LOG_TABLE: !Ref VerificationLogTable
+        USERS_TABLE: !Ref UsersTable
+        STATS_TABLE: !Ref StatsTable
+        GSTINCHECK_API_KEY: !Ref GstincheckApiKey
+        DATA_GOV_IN_API_KEY: !Ref DataGovInApiKey
+  Api:
+    Cors:
+      AllowMethods: "'GET,POST,OPTIONS'"
+      AllowHeaders: "'Content-Type,Authorization'"
+      AllowOrigin: "'*'"
+
+Resources:
+  SuppliersTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "${AWS::StackName}-Suppliers"
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: owner_user_id
+          AttributeType: S
+        - AttributeName: gstin
+          AttributeType: S
+      KeySchema:
+        - AttributeName: owner_user_id
+          KeyType: HASH
+        - AttributeName: gstin
+          KeyType: RANGE
+
+  VerificationLogTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "${AWS::StackName}-VerificationLog"
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: owner_user_id
+          AttributeType: S
+        - AttributeName: log_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: owner_user_id
+          KeyType: HASH
+        - AttributeName: log_id
+          KeyType: RANGE
+
+  UsersTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "${AWS::StackName}-Users"
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: user_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: user_id
+          KeyType: HASH
+
+  StatsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "${AWS::StackName}-Stats"
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: stat_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: stat_id
+          KeyType: HASH
+
+  UserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: !Sub "${AWS::StackName}-users"
+      AutoVerifiedAttributes: [email]
+      UsernameAttributes: [email]
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 8
+          RequireUppercase: true
+          RequireNumbers: true
+
+  UserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      ClientName: !Sub "${AWS::StackName}-client"
+      UserPoolId: !Ref UserPool
+      GenerateSecret: false
+      ExplicitAuthFlows:
+        - ALLOW_USER_PASSWORD_AUTH
+        - ALLOW_REFRESH_TOKEN_AUTH
+
+  AuthSignupFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../lambda/
+      Handler: auth_signup.handler
+      Environment:
+        Variables:
+          USER_POOL_CLIENT_ID: !Ref UserPoolClient
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - cognito-idp:SignUp
+              Resource: !GetAtt UserPool.Arn
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            Path: /auth/signup
+            Method: post
+
+  AuthConfirmFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../lambda/
+      Handler: auth_confirm.handler
+      Environment:
+        Variables:
+          USER_POOL_CLIENT_ID: !Ref UserPoolClient
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - cognito-idp:ConfirmSignUp
+              Resource: !GetAtt UserPool.Arn
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            Path: /auth/confirm
+            Method: post
+
+  AuthLoginFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../lambda/
+      Handler: auth_login.handler
+      Environment:
+        Variables:
+          USER_POOL_CLIENT_ID: !Ref UserPoolClient
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - cognito-idp:InitiateAuth
+              Resource: !GetAtt UserPool.Arn
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            Path: /auth/login
+            Method: post
+
+  VerifySupplierFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../
+      Handler: lambda.verify_supplier.handler
+      Timeout: 25
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - cognito-idp:GetUser
+              Resource: !GetAtt UserPool.Arn
+        - DynamoDBCrudPolicy:
+            TableName: !Ref SuppliersTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref VerificationLogTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref StatsTable
+        - Statement:
+          - Effect: Allow
+            Action: [bedrock:InvokeModel]
+            Resource:
+              - !Sub "arn:aws:bedrock:${AWS::Region}::foundation-model/amazon.nova-lite-v1:0"
+              - !Sub "arn:aws:bedrock:us-east-1::foundation-model/amazon.nova-lite-v1:0"
+              - !Sub "arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/apac.amazon.nova-lite-v1:0"
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            Path: /suppliers/verify
+            Method: post
+
+  GetSuppliersFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../
+      Handler: lambda.get_suppliers.handler
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - cognito-idp:GetUser
+              Resource: !GetAtt UserPool.Arn
+        - DynamoDBReadPolicy:
+            TableName: !Ref SuppliersTable
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            Path: /suppliers
+            Method: get
+
+  GetHistoryFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../
+      Handler: lambda.get_history.handler
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - cognito-idp:GetUser
+              Resource: !GetAtt UserPool.Arn
+        - DynamoDBReadPolicy:
+            TableName: !Ref VerificationLogTable
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            Path: /history
+            Method: get
+
+  GetReportFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../
+      Handler: lambda.get_report.handler
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - cognito-idp:GetUser
+              Resource: !GetAtt UserPool.Arn
+        - DynamoDBReadPolicy:
+            TableName: !Ref VerificationLogTable
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            Path: /reports/{log_id}
+            Method: get
+
+  GetStatsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../
+      Handler: lambda.get_stats.handler
+      Policies:
+        - DynamoDBReadPolicy:
+            TableName: !Ref StatsTable
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            Path: /stats
+            Method: get
+
+  DemoSeedFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../
+      Handler: lambda.demo_seed.handler
+      Timeout: 20
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - cognito-idp:GetUser
+              Resource: !GetAtt UserPool.Arn
+        - DynamoDBCrudPolicy:
+            TableName: !Ref SuppliersTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref VerificationLogTable
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            Path: /demo/seed
+            Method: post
+
+  GetFraudNetworkFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../
+      Handler: lambda.get_fraud_network.handler
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: [cognito-idp:GetUser]
+              Resource: !GetAtt UserPool.Arn
+        - DynamoDBReadPolicy:
+            TableName: !Ref SuppliersTable
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            Path: /fraud-network
+            Method: get
+
+Outputs:
+  SuppliersTableName:
+    Value: !Ref SuppliersTable
+  VerificationLogTableName:
+    Value: !Ref VerificationLogTable
+  UsersTableName:
+    Value: !Ref UsersTable
+  StatsTableName:
+    Value: !Ref StatsTable
+  UserPoolId:
+    Value: !Ref UserPool
+  UserPoolClientId:
+    Value: !Ref UserPoolClient
+  ApiUrl:
+    Description: Base URL for the API
+    Value: !Sub "https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/Prod"
+</file>
+
+</files>
