@@ -934,6 +934,9 @@
       .trace-line .check.bad {
         color: var(--risk);
       }
+      .trace-line .check.muted {
+        color: var(--text-secondary);
+      }
       .trace-line .t-agent {
         min-width: 84px;
         color: var(--text-secondary);
@@ -1004,11 +1007,102 @@
         }
       }
 
+      .report-actions {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 16px;
+        padding: 16px 32px;
+        border-top: 1px solid var(--hairline);
+        font-size: 13px;
+        color: var(--text-secondary);
+      }
+      .report-actions [data-badge-slot] {
+        display: inline-flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 12px;
+      }
+      .report-actions a.mono {
+        color: var(--accent);
+        text-decoration: underline;
+        word-break: break-all;
+      }
+      .badge-err {
+        color: var(--risk);
+      }
+      .print-only {
+        display: none;
+      }
+      .badge-foot {
+        margin-top: 20px;
+        font-size: 13px;
+        color: var(--text-secondary);
+      }
+      .badge-foot a {
+        color: var(--accent);
+        text-decoration: underline;
+      }
+
       [data-page] {
         display: none;
       }
       [data-page].active {
         display: block;
+      }
+
+      /* ---------- Print / "Download PDF" ---------- */
+      @media print {
+        body {
+          background: #fff;
+        }
+        nav.topnav,
+        .back-link,
+        .no-print,
+        .error-box,
+        .gstin-form,
+        .hint,
+        details.optional,
+        #trace {
+          display: none !important;
+        }
+        .print-only {
+          display: block;
+        }
+        .print-head {
+          padding: 14px 32px;
+          border-bottom: 1px solid var(--hairline);
+          font-family: "IBM Plex Mono", monospace;
+          font-size: 11px;
+          color: var(--text-secondary);
+        }
+        .shell,
+        .verify-wrap {
+          max-width: none;
+          padding: 0;
+          margin: 0;
+        }
+        .result-card {
+          border: 1px solid #ccc;
+        }
+        .trace-line {
+          opacity: 1;
+          transform: none;
+        }
+        .result-hero,
+        .finding,
+        .section-block,
+        .detail-row {
+          break-inside: avoid;
+        }
+        a {
+          color: inherit;
+          text-decoration: none !important;
+        }
+        * {
+          -webkit-print-color-adjust: exact;
+          print-color-adjust: exact;
+        }
       }
     </style>
     <script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
@@ -1030,7 +1124,7 @@
         <h1>Know who you're paying before the money leaves.</h1>
         <p class="lede">
           Every new supplier's GSTIN, checked against live government records in
-          under a second — not 45 seconds and a captcha at the GST portal.
+          seconds — not 45 seconds and a captcha at the GST portal.
         </p>
         <div class="hero-actions">
           <a href="#/verify" class="btn-primary">Verify a GSTIN</a>
@@ -1044,12 +1138,14 @@
           <div class="label">verifications run</div>
         </div>
         <div class="proof-item">
-          <div class="num mono">&lt;1s</div>
-          <div class="label">per check, vs. 45s manually</div>
+          <div class="num mono">~6s</div>
+          <div class="label">per check incl. AI summary, vs. 45s + captcha manually</div>
         </div>
         <div class="proof-item">
-          <div class="num mono">₹0.04</div>
-          <div class="label">cost per verification</div>
+          <div class="num mono">&lt;₹0.01</div>
+          <div class="label">
+            cost per verification (Lambda + DynamoDB + Bedrock), scales to zero
+          </div>
         </div>
       </div>
 
@@ -1242,6 +1338,14 @@
       </div>
     </div>
 
+    <!-- BADGE (public: #/badge/<id>) -->
+    <div data-page="/badge" class="verify-wrap" style="max-width: 760px">
+      <div class="error-box" id="badge-error"></div>
+      <div id="badge-body">
+        <div class="loading">Loading badge&hellip;</div>
+      </div>
+    </div>
+
     <!-- VERIFY -->
     <div data-page="/verify" class="verify-wrap">
       <h1>Verify a supplier</h1>
@@ -1396,6 +1500,8 @@
         missing_or_invalid_token:
           "Your session has expired — please log in again.",
         gstin_required: "Enter a GSTIN first.",
+        badge_only_for_verified:
+          "Badges are only issued to suppliers whose verdict is Verified.",
       };
 
       // One place for auth header, 401 handling and error messages.
@@ -1465,6 +1571,7 @@
         "/report",
         "/verify-gate",
         "/fraud-network",
+        "/badge",
       ]);
 
       function currentPath() {
@@ -1478,8 +1585,9 @@
       function resolveRoute() {
         const raw = currentPath();
         const m = raw.match(/^\/verify\/([A-Za-z0-9-]+)$/); // /verify/<log_id> = saved report
-        let page = m ? "/report" : raw;
-        const params = m ? { id: m[1] } : {};
+        const b = raw.match(/^\/badge\/([A-Za-z0-9]+)$/); // /badge/<id> = public badge
+        let page = m ? "/report" : b ? "/badge" : raw;
+        const params = m ? { id: m[1] } : b ? { id: b[1] } : {};
         if (!KNOWN.has(page)) page = "/";
         if (PROTECTED.has(page) && !session.isLoggedIn) page = "/verify-gate";
         return { page, params };
@@ -1516,6 +1624,7 @@
         "/history": () => loadHistory(),
         "/report": (params) => loadReport(params.id),
         "/fraud-network": () => loadFraudNetwork(),
+        "/badge": (params) => loadBadge(params.id),
       };
 
       function render() {
@@ -1628,7 +1737,19 @@
             ? `Error: ${esc(r.error)}`
             : `Source: ${esc(r.source || "unknown")} &middot; ${originLabel}${r.timestamp ? " &middot; " + esc(fmtTime(r.timestamp)) : ""}`;
 
+        const logId = permalinkId || r.log_id || "";
+        const actionsHtml = `
+      <div class="report-actions no-print">
+        <button type="button" class="btn-ghost" data-print="${esc(r.gstin)}">Download PDF</button>
+        ${
+          r.verdict === "VERIFIED" && logId
+            ? `<span data-badge-slot><button type="button" class="btn-ghost" data-badge-log="${esc(logId)}">Create public badge</button></span>`
+            : ""
+        }
+      </div>`;
+
         return `
+      <div class="print-only print-head">Supplier Verification Registry &middot; Verification report &middot; printed ${esc(new Date().toLocaleString("en-IN"))}</div>
       <div class="result-hero">
         <div>
           <div class="result-status-label">${r.data_origin === "crafted_test_case" ? "Crafted test case" : "Supplier"}</div>
@@ -1648,7 +1769,8 @@
       ${summaryHtml}
       ${traceHtml}
       <div class="result-details" style="border-top: 1px solid var(--hairline);">${detailRows}</div>
-      <div class="result-source">${sourceLine}${permalinkId ? ` &middot; <a href="#/verify/${esc(permalinkId)}">Open saved report</a>` : ""}</div>`;
+      <div class="result-source">${sourceLine}${permalinkId ? ` &middot; <a href="#/verify/${esc(permalinkId)}">Open saved report</a>` : ""}</div>
+      ${actionsHtml}`;
       }
 
       async function loadFraudNetwork() {
@@ -1760,7 +1882,7 @@
 
       function traceLineHtml(t) {
         return `<div class="trace-line shown done">
-      <span class="check ${t.ok ? "" : "bad"}">${t.ok ? "✓" : "✗"}</span>
+      <span class="check ${t.neutral ? "muted" : t.ok ? "" : "bad"}">${t.neutral ? "–" : t.ok ? "✓" : "✗"}</span>
       <span class="t-agent">${esc(t.agent)}</span>
       <span class="t-msg">${esc(t.message)}</span>
       <span class="t-ms">${t.ms !== null && t.ms !== undefined ? esc(t.ms) + " ms" : ""}</span>
@@ -1966,6 +2088,87 @@
           showError("report-error", e.message);
         }
       }
+
+      // ---------- Public badge page ----------
+      async function loadBadge(id) {
+        clearError("badge-error");
+        $("badge-body").innerHTML =
+          `<div class="loading">Loading badge&hellip;</div>`;
+        try {
+          const { data: b } = await api(`/badges/${encodeURIComponent(id)}`);
+          $("badge-body").innerHTML = `
+      <div class="result-card active">
+        <div class="result-hero">
+          <div>
+            <div class="result-status-label">Verified supplier</div>
+            <div class="result-legal-name">${esc(b.name)}</div>
+            <div class="mono gstin-line">${esc(b.gstin)}</div>
+          </div>
+          <div class="score-block v-verified">
+            <div class="score-num mono">${esc(b.trust_score)}</div>
+            <div class="score-of">/ 100 trust score</div>
+            ${verdictHtml("VERIFIED")}
+          </div>
+        </div>
+        <div class="result-details">
+          <div class="detail-row"><div class="k">GST registration status</div><div class="v">${esc(b.registration_status || "—")}</div></div>
+          <div class="detail-row"><div class="k">Last verified</div><div class="v">${esc(fmtTime(b.verified_at))}</div></div>
+        </div>
+        <div class="result-source">Issued by Supplier Verification Registry &middot; checked against live GST records &middot; re-checked nightly</div>
+      </div>
+      <p class="badge-foot">This badge is withdrawn automatically if the supplier stops being Verified. <a href="#/signup">Verify your own suppliers &rarr;</a></p>`;
+        } catch (e) {
+          $("badge-body").innerHTML = "";
+          showError(
+            "badge-error",
+            e.message === ERROR_TEXT.not_found
+              ? "This badge doesn't exist or is no longer valid."
+              : e.message,
+          );
+        }
+      }
+
+      // ---------- Report actions: PDF export + public badge ----------
+      document.addEventListener("click", async (e) => {
+        const printBtn = e.target.closest("[data-print]");
+        if (printBtn) {
+          const prev = document.title;
+          document.title = `Verification report ${printBtn.dataset.print}`; // becomes the PDF file name
+          window.print();
+          document.title = prev;
+          return;
+        }
+        const copyBtn = e.target.closest("[data-copy]");
+        if (copyBtn) {
+          try {
+            await navigator.clipboard.writeText(copyBtn.dataset.copy);
+            copyBtn.textContent = "Copied";
+          } catch (_) {
+            copyBtn.textContent = "Copy failed";
+          }
+          return;
+        }
+        const badgeBtn = e.target.closest("[data-badge-log]");
+        if (!badgeBtn) return;
+        const slot = badgeBtn.closest("[data-badge-slot]");
+        badgeBtn.disabled = true;
+        badgeBtn.textContent = "Creating…";
+        try {
+          const res = await api("/badges", {
+            method: "POST",
+            body: { log_id: badgeBtn.dataset.badgeLog },
+          });
+          const url = `${location.origin}${location.pathname}#/badge/${res.data.badge_id}`;
+          slot.innerHTML = `<a class="mono" href="${esc(url)}" target="_blank" rel="noopener">${esc(url)}</a> <button type="button" class="btn-ghost" data-copy="${esc(url)}">Copy link</button>`;
+        } catch (err) {
+          badgeBtn.disabled = false;
+          badgeBtn.textContent = "Create public badge";
+          slot.insertAdjacentHTML(
+            "beforeend",
+            `<span class="badge-err">${esc(err.message)}</span>`,
+          );
+        }
+      });
 
       // ---------- Login ----------
       document

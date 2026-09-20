@@ -9,12 +9,14 @@ why adding one new supplier can flip an older supplier to RISK: the ring only
 exists once both nodes are in the table.
 """
 
+import hashlib
 import json
 import os
 import time
 
 import boto3
 from boto3.dynamodb.conditions import Key
+from botocore.exceptions import ClientError
 
 from agents import risk_agent
 
@@ -36,6 +38,41 @@ def log_table():
 
 def stats_table():
     return dynamodb.Table(os.environ["STATS_TABLE"])
+
+
+def badges_table():
+    return dynamodb.Table(os.environ["BADGES_TABLE"])
+
+
+def badge_id_for(owner_user_id, gstin):
+    """Stable public id per (owner, supplier): re-issuing a badge updates the same link."""
+    return hashlib.sha256(f"{owner_user_id}:{gstin}".encode()).hexdigest()[:12]
+
+
+def sync_badge(owner_user_id, gstin, verdict, trust_score, checked_at=None):
+    """
+    Keep a published badge honest. While the supplier is still VERIFIED the badge
+    is refreshed; the moment it isn't, the badge is deleted (public link 404s).
+    A supplier that never had a badge is a no-op either way.
+    """
+    badge_id = badge_id_for(owner_user_id, gstin)
+    if verdict != "VERIFIED":
+        badges_table().delete_item(Key={"badge_id": badge_id})
+        return
+    expr, vals = "SET trust_score = :s", {":s": int(trust_score)}
+    if checked_at:
+        expr += ", verified_at = :t"
+        vals[":t"] = int(checked_at)
+    try:
+        badges_table().update_item(
+            Key={"badge_id": badge_id},
+            UpdateExpression=expr,
+            ConditionExpression="attribute_exists(badge_id)",
+            ExpressionAttributeValues=vals,
+        )
+    except ClientError as e:
+        if e.response["Error"]["Code"] != "ConditionalCheckFailedException":
+            raise
 
 
 def query_all(table, owner_user_id):

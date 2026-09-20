@@ -14,6 +14,7 @@ from moto import mock_aws
 os.environ.update({
     "AWS_ACCESS_KEY_ID": "x", "AWS_SECRET_ACCESS_KEY": "x", "AWS_DEFAULT_REGION": "ap-south-1",
     "SUPPLIERS_TABLE": "t-Suppliers", "VERIFICATION_LOG_TABLE": "t-Log", "STATS_TABLE": "t-Stats",
+    "BADGES_TABLE": "t-Badges",
 })
 
 TOKENS = {"tok-alice": "alice", "tok-bob": "bob"}
@@ -54,6 +55,7 @@ def env(monkeypatch):
         make("t-Suppliers", "owner_user_id", "gstin")
         make("t-Log", "owner_user_id", "log_id")
         make("t-Stats", "stat_id")
+        make("t-Badges", "badge_id")
 
         common = mod("common")
         def fake_get_user(AccessToken):
@@ -179,3 +181,84 @@ def test_legacy_rows_without_risk_data_stay_unscored_not_falsely_verified(env):
     rows = {s["gstin"]: s for s in call("get_suppliers")[1]["data"]}
     assert rows["29AAACI4798L1ZU"]["verdict"] == ""                      # UI shows "Not scored"
     assert rows["07AAACT2727Q1ZY"]["verdict"] == "VERIFIED"
+
+
+# ---------- public badges + nightly re-check ----------
+
+class _Ctx:
+    def get_remaining_time_in_millis(self):
+        return 300_000
+
+
+def _make_badge(token="tok-alice", gstin="29AAACI4798L1ZU", **declared):
+    _, out = call("verify_supplier", token=token, body={"gstin": gstin, **declared})
+    code, body = call("create_badge", token=token, body={"log_id": out["log_id"]})
+    return out, code, body
+
+
+def test_badge_is_public_and_exposes_only_safe_fields(env):
+    _, code, body = _make_badge(bank_account="000111222333")
+    assert code == 200
+    code, pub = call("get_badge", token=None, path={"badge_id": body["data"]["badge_id"]})   # no auth
+    assert code == 200
+    assert set(pub["data"]) == {"badge_id", "gstin", "name", "registration_status", "trust_score", "verified_at"}
+    assert "000111222333" not in json.dumps(pub)
+
+
+def test_badge_is_only_issued_to_verified_suppliers(env):
+    call("verify_supplier", body={"gstin": "29AAAPL1234C1ZA", "bank_account": "000111222333"})
+    _, out = call("verify_supplier", body={"gstin": "33AABCT3518Q1Z3", "bank_account": "000111222333"})   # ring -> RISK
+    code, body = call("create_badge", body={"log_id": out["log_id"]})
+    assert code == 400 and body["error"] == "badge_only_for_verified"
+
+
+def test_badge_cannot_be_created_from_someone_elses_report(env):
+    _, out = call("verify_supplier", token="tok-alice", body={"gstin": "29AAACI4798L1ZU"})
+    code, body = call("create_badge", token="tok-bob", body={"log_id": out["log_id"]})
+    assert code == 404 and body["error"] == "not_found"
+    assert call("get_badge", token=None, path={"badge_id": "doesnotexist"})[0] == 404
+
+
+def test_reissuing_a_badge_reuses_the_same_link(env):
+    _, _, first = _make_badge()
+    _, _, second = _make_badge()
+    assert first["data"]["badge_id"] == second["data"]["badge_id"]
+
+
+def test_nightly_recheck_revokes_badge_when_supplier_stops_being_verified(env, monkeypatch):
+    monkeypatch.setattr(mod("recheck_all"), "verify_gstin", mod("verify_supplier").verify_gstin)
+    _, _, b = _make_badge(gstin="29AAAPL1234C1ZA", bank_account="000111222333")
+    badge_id = b["data"]["badge_id"]
+    # A second supplier appears sharing the bank account: A flips to RISK, but its badge is stale until the re-check.
+    call("verify_supplier", body={"gstin": "33AABCT3518Q1Z3", "bank_account": "000111222333"})
+    assert call("get_badge", token=None, path={"badge_id": badge_id})[0] == 200
+
+    result = mod("recheck_all").handler({}, _Ctx())
+    summary = json.loads(result["body"])
+    assert summary["checked"] == 2 and summary["errors"] == 0
+    assert call("get_badge", token=None, path={"badge_id": badge_id})[0] == 404    # revoked
+
+
+def test_nightly_recheck_keeps_badge_and_logs_a_scheduled_entry(env, monkeypatch):
+    monkeypatch.setattr(mod("recheck_all"), "verify_gstin", mod("verify_supplier").verify_gstin)
+    _, _, b = _make_badge()
+    before = call("get_history")[1]["meta"]["total"]
+    mod("recheck_all").handler({}, _Ctx())
+    assert call("get_badge", token=None, path={"badge_id": b["data"]["badge_id"]})[0] == 200
+    hist = call("get_history")[1]
+    assert hist["meta"]["total"] == before + 1
+    # both logs can share the same second, so look through all of them rather than trusting the order
+    traces = [call("get_report", path={"log_id": h["log_id"]})[1]["data"]["trace"] for h in hist["data"]]
+    assert sum(any(t["agent"] == "scheduler" for t in tr) for tr in traces) == 1
+
+
+def test_nightly_recheck_skips_crafted_cases_and_survives_a_dead_live_source(env, monkeypatch):
+    from agents.verification_agent import VerificationResult
+    call("demo_seed")
+    monkeypatch.setattr(mod("recheck_all"), "verify_gstin",
+                        lambda gstin, trace=None: VerificationResult(gstin, "failed", "none", error="all_gstin_lookups_failed:timeout"))
+    before = {s["gstin"]: (s["verdict"], s["trust_score"]) for s in call("get_suppliers")[1]["data"]}
+    summary = json.loads(mod("recheck_all").handler({}, _Ctx())["body"])
+    assert summary["candidates"] == 5 and summary["skipped"] == 5 and summary["checked"] == 0   # 4 crafted never touched
+    after = {s["gstin"]: (s["verdict"], s["trust_score"]) for s in call("get_suppliers")[1]["data"]}
+    assert before == after                                                                       # nothing overwritten
