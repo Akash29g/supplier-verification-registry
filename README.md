@@ -11,7 +11,7 @@ Built solo for **WeMakeDevs × AWS "First Commit"** (Bharat Builds Tour), Sept
 17–20, 2026.
 
 **Live app:** https://main.dqyhm0mdxlkym.amplifyapp.com
-**Demo video:** 
+**Demo video:** https://youtu.be/K25UTbknLR4?si=FWL9xkVDJwoGKKmW
 
 ---
 
